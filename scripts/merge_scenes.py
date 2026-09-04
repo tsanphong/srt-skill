@@ -68,11 +68,17 @@ def _pyav_concat(inputs: list[Path], output: Path) -> bool:
     ostream.width, ostream.height = w, h
     ostream.pix_fmt = "yuv420p"
     ostream.options = {"crf": "24", "preset": "medium"}
+    frame_index = 0
     for p in inputs:
         cont = av.open(str(p))
         for frame in cont.decode(video=0):
             if frame.width != w or frame.height != h:
                 frame = frame.reformat(width=w, height=h)
+            # Each input starts its timestamps at zero; use one continuous
+            # output timeline so the second clip has monotonic DTS/PTS.
+            frame.pts = frame_index
+            frame.time_base = 1 / rate
+            frame_index += 1
             for pkt in ostream.encode(frame):
                 out.mux(pkt)
         cont.close()

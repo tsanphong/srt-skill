@@ -269,6 +269,8 @@ class RegionStreamRenderer:
         cfg = self.cfg
         ys_all, xs_all = np.where(allowed)
         if ys_all.size == 0:
+            for _ in range(frames):
+                writer.write(self.drawn.astype(np.uint8))
             return
         top, bottom = int(ys_all.min()), int(ys_all.max())
         left, right = int(xs_all.min()), int(xs_all.max())
@@ -402,7 +404,7 @@ class RegionStreamRenderer:
                         self._lay_ink_grid(writer, ink_frames, samples, pen_lifts, sample_cell, path, allowed)
                         centers = [self._cell_center(c) for c in path]
                     else:
-                        self._lay_ink(writer, ink_frames, [], set(), None, allowed)
+                        self._lay_ink(writer, ink_frames, [], set(), allowed)
                         centers = []
 
                 cur_ms += ink_frames * ms_per_frame

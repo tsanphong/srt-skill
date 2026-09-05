@@ -29,10 +29,14 @@ class LocalRuntimeTests(unittest.TestCase):
                     instance = renderer.RegionStreamRenderer(
                         np.full((40, 40, 3), 240, dtype=np.uint8), ann, cfg, None, True)
                     out = Path(td) / "blank.mp4"
-                    instance.render_to(out, 1000)
+                    progress = []
+                    instance.render_to(out, 1000, progress.append)
                     with av.open(str(out)) as video:
                         frames = list(video.decode(video=0))
                     self.assertEqual(len(frames), 30)
+                    self.assertTrue(progress)
+                    self.assertEqual(progress, sorted(progress))
+                    self.assertGreaterEqual(progress[-1], 85)
 
     def test_pyav_concat_has_continuous_timestamps_and_both_scenes(self):
         with tempfile.TemporaryDirectory() as td:

@@ -1,6 +1,6 @@
 const $ = (s, root=document) => root.querySelector(s);
 const $$ = (s, root=document) => [...root.querySelectorAll(s)];
-let state = { project: null, images: [], poll: null };
+let state = { project: null, images: [], jobs: new Map(), polls: new Map() };
 
 function show(view){ ['welcome','createView','studioView'].forEach(id=>$('#'+id).classList.toggle('hidden',id!==view)); }
 function toast(message,error=false){ const box=$('#toast'); box.textContent=message; box.className='toast'+(error?' error':''); setTimeout(()=>box.classList.add('hidden'),3500); }
@@ -56,13 +56,14 @@ function renderStudio(){
   $('#sceneSummary').textContent=`${p.scenes.length} cảnh · ${completed} đã dựng · ${p.scenes.length-completed} chờ dựng · tự sắp xếp theo số.`;
   $('#sceneGrid').innerHTML=p.scenes.map(scene=>sceneCard(scene,p.id)).join('');
   $$('.render-scene').forEach(button=>button.onclick=()=>startScene(Number(button.dataset.index)));
+  restoreActiveProgress();
   $('#outputPanel').classList.toggle('hidden',!p.final_video);
   $('#downloadFinal').href=`/api/projects/${p.id}/download`;
 }
 
 function sceneCard(scene,id){
   return `<article class="scene-card" data-index="${scene.index}">
-    <div class="scene-media" id="media-${scene.index}">${scene.rendered?`<video controls preload="metadata" poster="/api/projects/${id}/images/${scene.index}" src="/api/projects/${id}/scenes/${scene.index}/video"></video>`:`<img loading="lazy" src="/api/projects/${id}/images/${scene.index}" alt="Cảnh ${scene.index}">`}<span class="scene-no">CẢNH ${String(scene.index).padStart(2,'0')}</span><span class="scene-status ${scene.rendered?'done':'waiting'}">${scene.rendered?'✓ ĐÃ DỰNG':'⌛ CHỜ DỰNG'}</span></div>
+    <div class="scene-media" id="media-${scene.index}">${scene.rendered?`<video controls preload="metadata" poster="/api/projects/${id}/images/${scene.index}" src="/api/projects/${id}/scenes/${scene.index}/video"></video>`:`<img loading="lazy" src="/api/projects/${id}/images/${scene.index}" alt="Cảnh ${scene.index}">`}<span class="scene-no">CẢNH ${String(scene.index).padStart(2,'0')}</span><span class="scene-status ${scene.rendered?'done':'waiting'}">${scene.rendered?'✓ ĐÃ DỰNG':'⌛ CHỜ DỰNG'}</span><div class="scene-progress hidden"><strong>Đang chờ dựng…</strong><div class="scene-progress-track"><i></i></div><span>0%</span></div></div>
     <div class="scene-body"><div class="scene-name"><strong>${esc(scene.image)}</strong><small title="${esc(scene.source_name)}">${esc(scene.source_name)}</small></div>
       <div class="scene-controls"><label>Thời lượng (giây)<input class="scene-duration" type="number" min=".8" max="600" step=".1" value="${scene.duration}"></label><label>Tốc độ vẽ<select class="scene-speed">${[.5,.75,1,1.25,1.5,2,3].map(x=>`<option value="${x}" ${x===scene.speed?'selected':''}>${x}×</option>`).join('')}</select></label></div>
       <textarea class="scene-text" rows="3" placeholder="Phụ đề cho cảnh">${esc(scene.text)}</textarea>
@@ -80,15 +81,40 @@ async function reanalyze(){try{await save(false);state.project=await api(`/api/p
 async function uploadProjectAudio(kind,file){if(!file||!state.project)return;progressOpen(kind==='voice'?'Đang cập nhật voice':'Đang cập nhật nhạc','Đang lưu cấu hình và đọc file âm thanh…',25);try{await save(false);const autoAlign=state.project.settings.timing_mode==='voice';const form=new FormData();form.append('file',file);state.project=await api(`/api/projects/${state.project.id}/audio/${kind}`,{method:'POST',body:form});progressClose();renderStudio();toast(kind==='voice'?(autoAlign?'Đã cập nhật voice và căn lại thời lượng.':'Đã cập nhật voice; thời lượng thủ công được giữ nguyên.'):'Đã cập nhật nhạc nền. Chỉ cần ghép lại video.')}catch(e){progressClose();toast(e.message,true)}}
 
 function progressOpen(title,message,value=0){$('#progressTitle').textContent=title;$('#progressMessage').textContent=message;$('#progressBar').style.width=value+'%';$('#progressValue').textContent=Math.round(value)+'%';$('#closeProgress').classList.add('hidden');$('#progressOverlay').classList.remove('hidden');}
-function progressClose(){clearInterval(state.poll);$('#progressOverlay').classList.add('hidden');}
-async function watch(jobId){
-  clearInterval(state.poll);
-  const tick=async()=>{try{const job=await api(`/api/jobs/${jobId}`);$('#progressMessage').textContent=job.message;$('#progressBar').style.width=job.progress+'%';$('#progressValue').textContent=Math.round(job.progress)+'%';if(job.state==='done'){clearInterval(state.poll);state.project=await api(`/api/projects/${state.project.id}`);renderStudio();$('#progressTitle').textContent='Hoàn tất';$('#closeProgress').classList.remove('hidden');toast('Tác vụ đã hoàn tất.')}else if(job.state==='error'){clearInterval(state.poll);$('#progressTitle').textContent='Dựng thất bại';$('#progressMessage').textContent=job.error;$('#closeProgress').classList.remove('hidden');toast(job.error,true)}}catch(e){clearInterval(state.poll);toast(e.message,true)}};
-  await tick();state.poll=setInterval(tick,1100);
+function progressClose(){$('#progressOverlay').classList.add('hidden');}
+function setSceneProgress(index,value,message='Đang dựng…'){
+  const card=$(`.scene-card[data-index="${index}"]`);if(!card)return;
+  const panel=$('.scene-progress',card),percent=Math.max(0,Math.min(100,Number(value)||0));
+  panel.classList.remove('hidden');$('.scene-progress-track i',panel).style.width=percent+'%';$('span',panel).textContent=`${Math.round(percent)}%`;$('strong',panel).textContent=message;
+  card.classList.add('rendering');$$('button,input,select,textarea',card).forEach(control=>control.disabled=true);const button=$('.render-scene',card);if(button)button.textContent='✎ Đang dựng…'
 }
-async function startScene(index){try{await save(false);progressOpen(`Đang dựng cảnh ${index}`,'Chuẩn bị nét vẽ…');const r=await api(`/api/projects/${state.project.id}/render/scenes/${index}`,{method:'POST'});watch(r.job_id)}catch(e){progressClose();toast(e.message,true)}}
-async function startAll(){try{await save(false);progressOpen('Đang dựng toàn bộ','Các cảnh được xử lý lần lượt…');const r=await api(`/api/projects/${state.project.id}/render/all`,{method:'POST'});watch(r.job_id)}catch(e){progressClose();toast(e.message,true)}}
-async function mergeOnly(){try{await save(false);progressOpen('Đang ghép video','Chuẩn hóa khung hình và âm thanh…');const r=await api(`/api/projects/${state.project.id}/merge`,{method:'POST'});watch(r.job_id)}catch(e){progressClose();toast(e.message,true)}}
+function restoreActiveProgress(){for(const context of state.jobs.values()){if(context.projectId!==state.project?.id)continue;for(const index of context.sceneIndexes||[])setSceneProgress(index,context.progress?.[index]||1,context.messages?.[index]||'Đang chờ dựng…')}}
+async function refreshCurrentProject(){if(!state.project)return;const id=state.project.id,project=await api(`/api/projects/${id}`);if(state.project?.id===id){state.project=project;renderStudio()}}
+async function watch(jobId,context={}){
+  context={projectId:state.project.id,sceneIndexes:[],progress:{},messages:{},global:false,...context};state.jobs.set(jobId,context);
+  const tick=async()=>{try{
+    const job=await api(`/api/jobs/${jobId}`),details=job.details||{},sceneProgress=details.scene_progress||{};
+    for(const [key,value] of Object.entries(sceneProgress)){const index=Number(key);context.progress[index]=value;context.messages[index]=`Đang dựng cảnh ${index}`;if(context.projectId===state.project?.id)setSceneProgress(index,value,context.messages[index])}
+    if(context.global){$('#progressMessage').textContent=job.message;$('#progressBar').style.width=job.progress+'%';$('#progressValue').textContent=Math.round(job.progress)+'%'}
+    if(job.state==='done'){
+      state.jobs.delete(jobId);state.polls.delete(jobId);if(context.global)progressClose();await refreshCurrentProject();toast(context.sceneIndexes.length>1?'Đã dựng và ghép toàn bộ video.':'Tác vụ đã hoàn tất.');return;
+    }
+    if(job.state==='error'){
+      state.jobs.delete(jobId);state.polls.delete(jobId);if(context.global)progressClose();await refreshCurrentProject();toast(job.error||'Dựng thất bại',true);return;
+    }
+    state.polls.set(jobId,setTimeout(tick,900));
+  }catch(e){state.jobs.delete(jobId);state.polls.delete(jobId);if(context.global)progressClose();toast(e.message,true)}};
+  await tick();
+}
+async function startScene(index){
+  if([...state.jobs.values()].some(job=>job.projectId===state.project.id&&job.sceneIndexes?.includes(index)))return toast(`Cảnh ${index} đang được dựng.`);
+  try{await save(false);setSceneProgress(index,1,'Đang đưa vào hàng đợi…');const r=await api(`/api/projects/${state.project.id}/render/scenes/${index}`,{method:'POST'});watch(r.job_id,{sceneIndexes:[index]})}catch(e){await refreshCurrentProject();toast(e.message,true)}
+}
+async function startAll(){
+  if([...state.jobs.values()].some(job=>job.projectId===state.project.id&&job.sceneIndexes?.length))return toast('Đang có cảnh được dựng. Hãy chờ các cảnh đó hoàn tất.',true);
+  try{await save(false);const indexes=state.project.scenes.filter(scene=>!scene.rendered).map(scene=>scene.index);if(!indexes.length)return mergeOnly();indexes.forEach(index=>setSceneProgress(index,1,'Đang chờ dựng song song…'));const r=await api(`/api/projects/${state.project.id}/render/all`,{method:'POST'});watch(r.job_id,{sceneIndexes:indexes})}catch(e){await refreshCurrentProject();toast(e.message,true)}
+}
+async function mergeOnly(){if([...state.jobs.values()].some(job=>job.projectId===state.project.id&&job.sceneIndexes?.length))return toast('Hãy chờ các cảnh đang dựng hoàn tất trước khi ghép.',true);try{await save(false);progressOpen('Đang ghép video','Bạn vẫn có thể tiếp tục chỉnh sửa trong lúc ghép…');const r=await api(`/api/projects/${state.project.id}/merge`,{method:'POST'});watch(r.job_id,{global:true})}catch(e){progressClose();toast(e.message,true)}}
 $('#newProject').onclick=$('#heroStart').onclick=createScreen;$('#cancelCreate').onclick=()=>show('welcome');$('#createView').onsubmit=createProject;
 $('#pickImages').onclick=()=>$('#imagesInput').click();$('#pickFolder').onclick=()=>$('#folderInput').click();
 $('#imagesInput').onchange=e=>addImages(e.target.files);$('#folderInput').onchange=e=>addImages(e.target.files);

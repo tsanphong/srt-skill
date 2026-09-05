@@ -92,7 +92,12 @@ def projects_audio(project_id: str, kind: str):
 def scenes_render(project_id: str, scene_index: int):
     try:
         load_project(project_id)
-        job = JOBS.submit(project_id, "scene", lambda update: render_scene(project_id, scene_index, update))
+        job = JOBS.submit(project_id, "scene", lambda update: render_scene(
+            project_id, scene_index,
+            lambda value, message: update(value, message, {
+                "scene_index": scene_index, "scene_progress": {str(scene_index): round(value, 1)},
+            }),
+        ))
         return jsonify({"job_id": job}), 202
     except Exception as exc:
         return jsonify({"error": str(exc)}), 400

@@ -23,9 +23,10 @@ Nếu trình duyệt không tự mở, nhập `http://127.0.0.1:7860` vào Edge 
    - Nếu chưa chọn voice hoặc nhạc lúc tạo dự án, dùng **Chọn voice/Chọn nhạc** trong bảng Nguồn và cấu hình. Hai nút này cũng cho phép thay file về sau.
    - Thay nhạc không ảnh hưởng các cảnh đã dựng; chỉ cần ghép lại MP4. Thay voice trong chế độ tự khớp sẽ tính lại thời lượng và các cảnh có thời lượng thay đổi cần được dựng lại.
 6. Với từng cảnh, sửa phụ đề, thời lượng và tốc độ vẽ. Tốc độ lớn hơn làm phần vẽ hoàn tất sớm hơn và giữ ảnh hoàn chỉnh lâu hơn trong cùng thời lượng cảnh.
-7. Bấm **Dựng cảnh** để xem riêng. Nếu cảnh lỗi, sửa thông số rồi bấm **Dựng lại cảnh**; các cảnh khác được giữ nguyên.
-8. Bấm **Dựng toàn bộ** để chạy lần lượt mọi cảnh và tự ghép MP4. Thanh tiến trình hiển thị trạng thái hiện tại.
-9. Nếu đã dựng riêng tất cả cảnh, dùng **Ghép các cảnh đã dựng**. Nút **Tải MP4** xuất hiện khi hoàn tất.
+7. Bấm **Dựng cảnh** để xem riêng. Thanh tiến trình nằm ngay giữa thẻ cảnh, nên bạn vẫn có thể xem, chỉnh sửa hoặc yêu cầu dựng các cảnh khác. Nếu cảnh lỗi, sửa thông số rồi bấm **Dựng lại cảnh**; các cảnh khác được giữ nguyên.
+8. Có thể chọn dựng nhiều cảnh. Ứng dụng xử lý tối đa 2 cảnh cùng lúc và tự xếp hàng các cảnh còn lại để không làm máy quá tải. Phần trăm được cập nhật theo số khung hình thực tế, gồm cả bước mã hóa H.264 cuối cảnh.
+9. Bấm **Dựng toàn bộ** để xử lý song song các cảnh chưa hoàn tất rồi tự ghép MP4.
+10. Nếu đã dựng riêng tất cả cảnh, dùng **Ghép các cảnh đã dựng**. Nút **Tải MP4** xuất hiện khi hoàn tất.
 
 ## Cấu trúc dữ liệu
 
@@ -79,4 +80,4 @@ python -X utf8 scripts/prepare_env.py
 
 - Căn voice thực hiện ở cấp cảnh, chưa nhận dạng từng từ.
 - Ảnh được dùng làm nguồn vẽ; ứng dụng không tự tạo hình minh họa bằng AI.
-- Mỗi tiến trình dựng xử lý một dự án tại một thời điểm để tránh dùng hết CPU và RAM.
+- Tối đa 2 cảnh được dựng đồng thời; các cảnh tiếp theo tự chờ trong hàng đợi để giữ máy ổn định.

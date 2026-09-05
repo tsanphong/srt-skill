@@ -1,0 +1,88 @@
+.overlay {
+  position: fixed;
+  right: 22px;
+  bottom: 22px;
+  width: min(390px, calc(100vw - 30px));
+  inset: auto 22px 22px auto;
+  background: transparent;
+  backdrop-filter: none;
+  display: block;
+  z-index: 9;
+  pointer-events: none;
+}
+
+.progress-card {
+  width: 100%;
+  padding: 18px;
+  border: 1px solid #d8cdb7;
+  border-radius: 14px;
+  text-align: left;
+  box-shadow: 0 16px 45px #0005;
+  pointer-events: auto;
+}
+
+.progress-card .spinner {
+  float: left;
+  width: 42px;
+  height: 42px;
+  margin-right: 12px;
+  font-size: 23px;
+}
+
+.progress-card h2 { margin: 3px 0; font-size: 17px; }
+.progress-card p { margin: 2px 0; color: #687274; font-size: 12px; }
+.progress-card > strong { display: block; text-align: right; font-size: 12px; }
+.progress-card .progress-track { clear: both; height: 7px; margin: 15px 0 6px; }
+
+.scene-progress {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-rows: auto auto;
+  align-content: center;
+  gap: 7px 10px;
+  padding: 20px;
+  color: #fff;
+  background: #07131ddd;
+  backdrop-filter: blur(2px);
+}
+
+.scene-progress strong {
+  overflow: hidden;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scene-progress > span { color: #ffd575; font-size: 12px; font-weight: 800; }
+.scene-progress-track {
+  grid-column: 1 / -1;
+  height: 8px;
+  overflow: hidden;
+  background: #ffffff2b;
+  border-radius: 99px;
+}
+
+.scene-progress-track i {
+  display: block;
+  width: 0;
+  height: 100%;
+  background: linear-gradient(90deg, #f2b544, #ffe08a);
+  transition: width .25s;
+}
+
+.scene-card.rendering {
+  border-color: #d99a31;
+  box-shadow: 0 0 0 2px #d99a3138;
+}
+
+.scene-card button:disabled,
+.scene-card input:disabled,
+.scene-card select:disabled,
+.scene-card textarea:disabled { cursor: not-allowed; opacity: .58; }
+
+@media (max-width: 650px) {
+  .overlay { right: 12px; bottom: 12px; width: calc(100vw - 24px); inset: auto 12px 12px auto; }
+}

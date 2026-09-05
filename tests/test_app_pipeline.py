@@ -1,6 +1,8 @@
 import io
 import shutil
 import tempfile
+import threading
+import time
 import unittest
 import wave
 from pathlib import Path
@@ -98,6 +100,32 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(result, Path("final.mp4"))
         self.assertEqual(render.call_count, 1)
         self.assertEqual(render.call_args.args[1], 2)
+
+    def test_batch_render_runs_two_scenes_concurrently(self):
+        project = pipeline.create_project(
+            "Song song",
+            [("1.png", png_bytes()), ("2.png", png_bytes()), ("3.png", png_bytes())],
+            "Một. Hai. Ba.",
+        )
+        active = 0
+        peak = 0
+        lock = threading.Lock()
+
+        def fake_render(project_id, scene_index, progress):
+            nonlocal active, peak
+            with lock:
+                active += 1
+                peak = max(peak, active)
+            progress(50, f"Đang dựng cảnh {scene_index}")
+            time.sleep(.05)
+            with lock:
+                active -= 1
+            return Path(f"scene-{scene_index:03d}.mp4")
+
+        with patch.object(pipeline, "render_scene", side_effect=fake_render), \
+                patch.object(pipeline, "merge_project", return_value=Path("final.mp4")):
+            pipeline.render_all(project["id"], lambda *_: None)
+        self.assertEqual(peak, 2)
 
 
 if __name__ == "__main__":

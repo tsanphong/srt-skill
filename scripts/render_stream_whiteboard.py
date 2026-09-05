@@ -354,13 +354,33 @@ class RegionStreamRenderer:
         return samples, pen_lifts, sample_cell
 
     # ── 主渲染 ──
-    def render_to(self, raw_path: Path, total_ms: int) -> Path:
+    def render_to(self, raw_path: Path, total_ms: int, progress_callback=None) -> Path:
         cfg = self.cfg
         elements = sorted(self.ann["elements"], key=lambda e: e["reveal"]["startMs"])
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-        writer = cv2.VideoWriter(str(raw_path), fourcc, cfg.fps, (self.out_w, self.out_h))
-        if not writer.isOpened():
+        video_writer = cv2.VideoWriter(str(raw_path), fourcc, cfg.fps, (self.out_w, self.out_h))
+        if not video_writer.isOpened():
             raise RuntimeError("无法打开视频写入器")
+
+        total_frames = max(1, round(total_ms * cfg.fps / 1000))
+
+        class ProgressWriter:
+            def __init__(self, target, expected, callback):
+                self.target, self.expected, self.callback = target, expected, callback
+                self.written, self.last_percent = 0, -1
+
+            def write(self, frame):
+                self.target.write(frame)
+                self.written += 1
+                percent = min(90, round(self.written / self.expected * 90))
+                if self.callback and percent > self.last_percent:
+                    self.last_percent = percent
+                    self.callback(percent)
+
+            def release(self):
+                self.target.release()
+
+        writer = ProgressWriter(video_writer, total_frames, progress_callback)
 
         weight_sum = cfg.ink_weight + cfg.color_weight
         cur_ms = 0.0
@@ -543,8 +563,10 @@ def main(argv=None) -> int:
     print(f"  区域数: {len(annotation['elements'])}, 总时长: {total_ms}ms, "
           f"笔迹: {cfg.ink_path_mode}, 上色: {cfg.color_fill}")
 
-    renderer.render_to(raw_path, total_ms)
+    renderer.render_to(raw_path, total_ms, lambda value: print(f"PROGRESS={value}", flush=True))
+    print("PROGRESS=94", flush=True)
     final = sr.transcode_h264(raw_path, out_path)
+    print("PROGRESS=100", flush=True)
 
     size_mb = final.stat().st_size / (1024 * 1024)
     print(f"\n最终视频: {final}  ({size_mb:.2f} MB)")

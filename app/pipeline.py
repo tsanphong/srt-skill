@@ -9,8 +9,9 @@ import sys
 import threading
 import unicodedata
 import uuid
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
+from functools import wraps
 from pathlib import Path
 from typing import Callable
 
@@ -23,6 +24,18 @@ RENDERER = ROOT / "scripts" / "render_stream_whiteboard.py"
 HAND = ROOT / "assets" / "drawing-hand-clean.png"
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff"}
 AUDIO_EXTENSIONS = {".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg", ".webm"}
+RENDER_SLOTS = threading.BoundedSemaphore(2)
+PROJECT_STATE_LOCK = threading.RLock()
+ACTIVE_SCENES_LOCK = threading.Lock()
+ACTIVE_SCENES: set[tuple[str, int]] = set()
+
+
+def synchronized_state(fn):
+    @wraps(fn)
+    def wrapped(*args, **kwargs):
+        with PROJECT_STATE_LOCK:
+            return fn(*args, **kwargs)
+    return wrapped
 
 
 def natural_key(value: str) -> list[object]:
@@ -101,12 +114,17 @@ def project_path(project_id: str) -> Path:
 
 
 def load_project(project_id: str) -> dict:
-    return read_json(project_path(project_id) / "project.json")
+    with PROJECT_STATE_LOCK:
+        return read_json(project_path(project_id) / "project.json")
 
 
 def save_project(project: dict) -> dict:
-    project["updated_at"] = datetime.now().isoformat(timespec="seconds")
-    write_json(project_path(project["id"]) / "project.json", project)
+    with PROJECT_STATE_LOCK:
+        project["updated_at"] = datetime.now().isoformat(timespec="seconds")
+        path = project_path(project["id"]) / "project.json"
+        temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+        write_json(temporary, project)
+        temporary.replace(path)
     return project
 
 
@@ -131,6 +149,7 @@ def _unique_id(name: str) -> str:
     return candidate
 
 
+@synchronized_state
 def create_project(name: str, images: list[tuple[str, bytes]], script: str = "",
                    voice: tuple[str, bytes] | None = None,
                    music: tuple[str, bytes] | None = None) -> dict:
@@ -180,6 +199,7 @@ def _audio_file(project: dict, kind: str) -> Path | None:
     return project_path(project["id"]) / "source" / "audio" / name if name else None
 
 
+@synchronized_state
 def set_audio(project_id: str, kind: str, filename: str, data: bytes) -> dict:
     if kind not in {"voice", "music"}:
         raise ValueError("Loại âm thanh không hợp lệ")
@@ -203,6 +223,7 @@ def set_audio(project_id: str, kind: str, filename: str, data: bytes) -> dict:
     return load_project(project_id)
 
 
+@synchronized_state
 def analyze_project(project_id: str) -> dict:
     project = load_project(project_id)
     count = len(project["scenes"])
@@ -241,6 +262,7 @@ def analyze_project(project_id: str) -> dict:
     return save_project(project)
 
 
+@synchronized_state
 def update_project(project_id: str, payload: dict) -> dict:
     project = load_project(project_id)
     if "script" in payload:
@@ -320,11 +342,34 @@ def _annotation(project: dict, scene: dict) -> Path:
     return path
 
 
+def _scene_signature(project: dict, scene: dict) -> tuple:
+    settings = project.get("settings", {})
+    return (
+        scene.get("text"), float(scene.get("duration", 0)), float(scene.get("speed", 1)),
+        settings.get("fps"), settings.get("ink_color"), settings.get("ink_path"),
+        settings.get("color_fill"),
+    )
+
+
 def render_scene(project_id: str, scene_index: int, progress: Callable[[float, str], None] | None = None) -> Path:
+    active_key = (project_id, scene_index)
+    with ACTIVE_SCENES_LOCK:
+        if active_key in ACTIVE_SCENES:
+            raise RuntimeError(f"Cảnh {scene_index} đang được dựng")
+        ACTIVE_SCENES.add(active_key)
+    try:
+        return _render_scene(project_id, scene_index, progress)
+    finally:
+        with ACTIVE_SCENES_LOCK:
+            ACTIVE_SCENES.discard(active_key)
+
+
+def _render_scene(project_id: str, scene_index: int, progress: Callable[[float, str], None] | None = None) -> Path:
     project = load_project(project_id)
     scene = next((x for x in project["scenes"] if x["index"] == scene_index), None)
     if not scene:
         raise ValueError("Không tìm thấy cảnh")
+    signature = _scene_signature(project, scene)
     root = project_path(project_id)
     annotation = _annotation(project, scene)
     image = root / "source" / "images" / scene["image"]
@@ -336,15 +381,33 @@ def render_scene(project_id: str, scene_index: int, progress: Callable[[float, s
                "--color-fill", settings.get("color_fill", "contour-wipe"), "--ink-color", settings.get("ink_color", "#222831")]
     log_path = root / "logs" / f"scene-{scene_index:03d}.log"
     if progress:
-        progress(5, f"Đang dựng cảnh {scene_index}")
-    proc = subprocess.run(command, cwd=ROOT, capture_output=True, text=True, encoding="utf-8", errors="replace")
-    log_path.write_text(proc.stdout + "\n" + proc.stderr, encoding="utf-8")
+        progress(1, f"Cảnh {scene_index} đang chờ lượt")
+    output_lines: list[str] = []
+    with RENDER_SLOTS:
+        if progress:
+            progress(3, f"Đang chuẩn bị cảnh {scene_index}")
+        proc = subprocess.Popen(command, cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                text=True, encoding="utf-8", errors="replace", bufsize=1)
+        assert proc.stdout is not None
+        for line in proc.stdout:
+            output_lines.append(line)
+            match = re.search(r"PROGRESS=(\d+(?:\.\d+)?)", line)
+            if match and progress:
+                value = max(3.0, min(99.0, float(match.group(1))))
+                progress(value, f"Đang dựng cảnh {scene_index} · {round(value)}%")
+        proc.wait()
+    log_path.write_text("".join(output_lines), encoding="utf-8")
     if proc.returncode:
         raise RuntimeError(f"Dựng cảnh {scene_index} thất bại. Xem {log_path.name}")
-    project = load_project(project_id)
-    scene = next(x for x in project["scenes"] if x["index"] == scene_index)
-    scene.update({"rendered": True, "status": "done", "video": output.name})
-    save_project(project)
+    with PROJECT_STATE_LOCK:
+        project = load_project(project_id)
+        scene = next(x for x in project["scenes"] if x["index"] == scene_index)
+        if _scene_signature(project, scene) != signature:
+            scene.update({"rendered": False, "status": "ready", "video": None})
+            save_project(project)
+            raise RuntimeError(f"Cảnh {scene_index} đã được chỉnh sửa trong lúc dựng. Hãy dựng lại cảnh này.")
+        scene.update({"rendered": True, "status": "done", "video": output.name})
+        save_project(project)
     if progress:
         progress(100, f"Đã dựng cảnh {scene_index}")
     return output
@@ -455,9 +518,10 @@ def merge_project(project_id: str, progress: Callable[[float, str], None] | None
     (root / "logs" / "final.log").write_text(proc.stderr, encoding="utf-8")
     if proc.returncode:
         raise RuntimeError("Xuất MP4 thất bại. Xem logs/final.log")
-    project = load_project(project_id)
-    project["final_video"] = final.name
-    save_project(project)
+    with PROJECT_STATE_LOCK:
+        project = load_project(project_id)
+        project["final_video"] = final.name
+        save_project(project)
     if progress:
         progress(100, "Đã xuất MP4 hoàn chỉnh")
     return final
@@ -465,7 +529,7 @@ def merge_project(project_id: str, progress: Callable[[float, str], None] | None
 
 class JobManager:
     def __init__(self) -> None:
-        self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="whiteboard")
+        self.executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="whiteboard")
         self.jobs: dict[str, dict] = {}
         self.lock = threading.Lock()
 
@@ -475,9 +539,12 @@ class JobManager:
             self.jobs[job_id] = {"id": job_id, "project_id": project_id, "kind": kind,
                                  "state": "queued", "progress": 0, "message": "Đang chờ", "error": None}
 
-        def update(progress: float, message: str) -> None:
+        def update(progress: float, message: str, details: dict | None = None) -> None:
             with self.lock:
-                self.jobs[job_id].update({"state": "running", "progress": round(progress, 1), "message": message})
+                values = {"state": "running", "progress": round(progress, 1), "message": message}
+                if details is not None:
+                    values["details"] = details
+                self.jobs[job_id].update(values)
 
         def run() -> None:
             try:
@@ -499,16 +566,34 @@ class JobManager:
 JOBS = JobManager()
 
 
-def render_all(project_id: str, progress: Callable[[float, str], None]) -> Path:
+def render_all(project_id: str, progress: Callable[..., None]) -> Path:
     project = load_project(project_id)
     root = project_path(project_id)
     pending = [scene for scene in project["scenes"]
                if not scene.get("rendered") or not scene.get("video")
                or not (root / "scenes" / scene["video"]).exists()]
     total = len(pending)
-    for i, scene in enumerate(pending):
-        def scene_progress(value: float, message: str, i=i) -> None:
-            progress((i + value / 100) / total * 88, message)
-        render_scene(project_id, scene["index"], scene_progress)
+    scene_values = {scene["index"]: 0.0 for scene in pending}
+    progress_lock = threading.Lock()
+
+    def run_one(scene: dict) -> Path:
+        index = scene["index"]
+
+        def scene_progress(value: float, message: str) -> None:
+            with progress_lock:
+                scene_values[index] = value
+                overall = sum(scene_values.values()) / max(1, total) * .88
+                progress(overall, message, {
+                    "scene_index": index,
+                    "scene_progress": {str(key): round(current, 1) for key, current in scene_values.items()},
+                })
+
+        return render_scene(project_id, index, scene_progress)
+
+    if pending:
+        with ThreadPoolExecutor(max_workers=min(2, total), thread_name_prefix="scene") as executor:
+            futures = [executor.submit(run_one, scene) for scene in pending]
+            for future in as_completed(futures):
+                future.result()
     progress(90, "Đang ghép video hoàn chỉnh")
     return merge_project(project_id, lambda value, message: progress(90 + value * .1, message))

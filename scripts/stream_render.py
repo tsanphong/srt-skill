@@ -70,7 +70,9 @@ class Config:
     tip_anchor_x: float = 0.0
     tip_anchor_y: float = 0.0
     canvas_hex: str = "#F6F1E3"    # 画布底色
-    match_bg: bool = True          # 把原图背景染成画布底色，使起笔/上色背景一致
+    # 默认保留原图每一个像素。旧版会按四角颜色猜测背景；对于照片或深色插画，
+    # 这会把真实的墙面、衣物等误删成浅色纸张，形成白点和大片漏色。
+    match_bg: bool = False         # 仅在线稿确有纯色背景时显式开启
     match_bg_threshold: int = 28   # 与原图背景色差异小于此值视为背景（BGR 三通道和）
     steps_per_frame: int = 4       # 每帧推进的落点数基准
     # ── contour-wipe 上色模式专用 ──
@@ -1547,8 +1549,13 @@ class StreamBoardRenderer:
             lead = _ease_in_out_sine(progress) * sweep - delay_px
 
             # 揭示掩码：y <= lead + wave[x] - resistance[y,x]*delay_px
-            threshold = lead + wave[None, :] - resistance * delay_px  # (H,W)
+            # 轮廓阻力在上色末段逐渐消退，让早期仍有“沿轮廓蔓延”的质感，
+            # 同时避免阻力场在最后几帧留下白点。最后一帧强制完整揭示。
+            resistance_strength = (1.0 - progress) ** 2
+            threshold = lead + wave[None, :] - resistance * delay_px * resistance_strength  # (H,W)
             reveal = ys <= threshold                        # (H,W) bool
+            if fi == target_frames - 1:
+                reveal[...] = True
 
             # 揭示原色到 drawn 缓存
             self.drawn[reveal] = color_src[reveal]
@@ -1726,6 +1733,10 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--ink-path", default="grid", choices=["grid", "skeleton"],
         help="起笔段笔迹路径: grid 网格格中心插值(默认); skeleton 骨架级像素追踪(更精准贴合线条)",
     )
+    p.add_argument(
+        "--match-background", action="store_true",
+        help="把接近四角背景色的像素替换为画布色；仅适合纯色线稿背景",
+    )
     return p.parse_args(argv)
 
 
@@ -1749,6 +1760,7 @@ def _build_cfg(args: argparse.Namespace) -> Config:
         kw["pause_mode"] = args.pause
     if args.ink_path is not None:
         kw["ink_path_mode"] = args.ink_path
+    kw["match_bg"] = args.match_background
     return Config(**kw)
 
 

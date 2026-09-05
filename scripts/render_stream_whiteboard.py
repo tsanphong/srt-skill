@@ -259,12 +259,15 @@ class RegionStreamRenderer:
         disk = sr._feathered_disk(self.cfg.brush_radius)
         idx_for_frame = _frame_progress_indices(n, frames)
         last: int | None = None
-        for ci in idx_for_frame:
+        for frame_index, ci in enumerate(idx_for_frame):
             if last is None:
                 self._color_stamp(*centers[ci], disk, allowed)
             else:
                 for k in range(last + 1, ci + 1):
                     self._color_stamp(*centers[k], disk, allowed)
+            # 帧序列结束前补齐允许区域，避免笔刷覆盖不到的白点残留。
+            if frame_index == len(idx_for_frame) - 1:
+                self.drawn[allowed] = self.color_img[allowed].astype(np.float32)
             cx, cy = centers[ci]
             writer.write(self._snapshot_with_tip(cx, cy))
             last = ci
@@ -313,8 +316,13 @@ class RegionStreamRenderer:
         for fi in range(frames):
             progress = 1.0 if frames == 1 else fi / (frames - 1)
             lead = sr._ease_in_out_sine(progress) * sweep - delay_px
-            threshold = lead + wave[None, :] - resistance * delay_px
+            # 轮廓阻力仅用于上色初段；末段平滑衰减并在最后一帧完整揭示，
+            # 防止暗部、纹理边缘留下纸张色白点。
+            resistance_strength = (1.0 - progress) ** 2
+            threshold = lead + wave[None, :] - resistance * delay_px * resistance_strength
             reveal = (ys <= threshold) & allowed_crop
+            if fi == frames - 1:
+                reveal = allowed_crop.copy()
             drawn_crop[reveal] = color_crop[reveal]
 
             lane = sr._ease_in_out_sine((fi / blocks * 2.0) % 1.0)
@@ -503,6 +511,8 @@ def _parse_args(argv=None):
                    help="输出长边像素上限（预览可调小加速，默认 1080）")
     p.add_argument("--ink-color", default=None,
                    help="墨迹颜色，例如 #222831；缺省时保持原图灰度")
+    p.add_argument("--match-background", action="store_true",
+                   help="把接近四角背景色的像素替换为画布色；仅适合纯色线稿背景")
     return p.parse_args(argv)
 
 
@@ -519,6 +529,7 @@ def _build_cfg(args) -> sr.Config:
     kw["ink_path_mode"] = args.ink_path
     kw["color_fill"] = args.color_fill
     kw["pause_mode"] = args.pause
+    kw["match_bg"] = args.match_background
     if args.ink_color is not None:
         if not re.fullmatch(r"#[0-9a-fA-F]{6}", args.ink_color):
             raise ValueError("--ink-color 必须是 #RRGGBB")

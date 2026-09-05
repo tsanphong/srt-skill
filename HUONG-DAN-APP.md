@@ -18,7 +18,7 @@ Nếu trình duyệt không tự mở, nhập `http://127.0.0.1:7860` vào Edge 
 1. Chọn **Dự án mới**, nhập tên.
 2. Chọn nhiều ảnh hoặc chọn cả thư mục. Ứng dụng sắp xếp tự nhiên theo số trong tên, ví dụ `1.png`, `2.png`, `10.png`.
 3. Dán kịch bản hoặc tải TXT; chọn voice MP3/WAV và nhạc nền nếu có.
-4. Bấm **Tạo và tự căn chỉnh**. Khi có voice, tổng thời gian cảnh được căn theo đúng độ dài voice; kịch bản được chia theo trọng lượng câu. Không có voice thì mỗi ảnh mặc định khoảng sáu giây.
+4. Bấm **Tạo và tự căn chỉnh**. Khi có voice và chọn **Tự khớp theo voice**, tổng thời gian cảnh được căn theo đúng độ dài voice; kịch bản được chia theo trọng lượng câu. Chọn **Thủ công theo cảnh** để đặt một thời lượng mặc định rồi chỉnh từng cảnh.
 5. Chọn tỷ lệ 9:16 hoặc 16:9, độ phân giải, FPS, màu nét, kiểu đường bút và cách tô màu. Điều chỉnh âm lượng voice/nhạc, tên kênh và phụ đề.
 6. Với từng cảnh, sửa phụ đề, thời lượng và tốc độ vẽ. Tốc độ lớn hơn làm phần vẽ hoàn tất sớm hơn và giữ ảnh hoàn chỉnh lâu hơn trong cùng thời lượng cảnh.
 7. Bấm **Dựng cảnh** để xem riêng. Nếu cảnh lỗi, sửa thông số rồi bấm **Dựng lại cảnh**; các cảnh khác được giữ nguyên.
@@ -48,7 +48,7 @@ workspace/projects/<ma-du-an>/
 
 ## Căn chỉnh và phụ đề
 
-Ứng dụng đọc chính xác thời lượng container của voice bằng PyAV. Kịch bản được tách theo xuống dòng và dấu câu, rồi phân bổ cho các cảnh dựa trên số ký tự. Đây là căn chỉnh tự động ở cấp cảnh, phù hợp khi mỗi ảnh tương ứng một đoạn lời. Bạn có thể sửa văn bản và thời lượng từng cảnh trước khi dựng.
+Ứng dụng đọc chính xác thời lượng container của voice bằng PyAV. Kịch bản được tách theo xuống dòng và dấu câu, rồi phân bổ cho các cảnh dựa trên số ký tự. Đây là căn chỉnh tự động ở cấp cảnh, phù hợp khi mỗi ảnh tương ứng một đoạn lời. Chế độ thủ công áp dụng cùng thời lượng ban đầu cho các ảnh. Bạn có thể sửa văn bản, thời lượng và tốc độ từng cảnh trước khi dựng.
 
 Phụ đề được tạo ở hai dạng: `subtitles.srt` để dùng riêng và ASS để ghi trực tiếp vào MP4. Font phồn thể trên Windows dùng Microsoft JhengHei. Tên kênh nằm ở góc trên bên phải.
 

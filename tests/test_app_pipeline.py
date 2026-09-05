@@ -70,6 +70,14 @@ class PipelineTests(unittest.TestCase):
         self.assertFalse(project["scenes"][0]["rendered"])
         self.assertIsNone(project["scenes"][0]["video"])
 
+    def test_manual_timing_mode_uses_requested_scene_duration(self):
+        project = pipeline.create_project("Thủ công", [("1.png", png_bytes()), ("2.png", png_bytes())], "Một. Hai.", ("voice.wav", wav_bytes(9)), None)
+        pipeline.update_project(project["id"], {"settings": {"timing_mode": "manual", "manual_scene_duration": 4.5}})
+        project = pipeline.analyze_project(project["id"])
+        self.assertEqual(project["analysis"]["mode"], "manual")
+        self.assertAlmostEqual(project["analysis"]["total_duration"], 9.0)
+        self.assertEqual([x["duration"] for x in project["scenes"]], [4.5, 4.5])
+
 
 if __name__ == "__main__":
     unittest.main()

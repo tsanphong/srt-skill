@@ -166,6 +166,7 @@ def create_project(name: str, images: list[tuple[str, bytes]], script: str = "",
             "aspect": "9:16", "fps": 30, "resolution": "1080p", "ink_color": "#222831",
             "ink_path": "grid", "color_fill": "contour-wipe", "voice_volume": 1.0,
             "music_volume": 0.18, "subtitles": True, "channel_name": "",
+            "timing_mode": "voice", "manual_scene_duration": 6.0,
         },
         "analysis": {}, "final_video": None,
     }
@@ -182,16 +183,23 @@ def _audio_file(project: dict, kind: str) -> Path | None:
 def analyze_project(project_id: str) -> dict:
     project = load_project(project_id)
     count = len(project["scenes"])
-    voice_duration = probe_duration(_audio_file(project, "voice"))
+    settings = project.get("settings", {})
+    detected_voice_duration = probe_duration(_audio_file(project, "voice"))
+    use_voice = settings.get("timing_mode", "voice") == "voice" and detected_voice_duration
+    voice_duration = detected_voice_duration if use_voice else None
     chunks = distribute_text(project.get("script", ""), count)
     weights = [max(1, len(re.sub(r"\s+", "", chunk))) for chunk in chunks]
-    total = voice_duration or max(4.0 * count, 6.0 * count)
-    weight_total = sum(weights) or count
-    raw = [max(2.0, total * w / weight_total) for w in weights]
-    scale = total / sum(raw) if raw else 1
-    durations = [round(value * scale, 3) for value in raw]
-    if durations:
-        durations[-1] = round(max(0.5, total - sum(durations[:-1])), 3)
+    manual_duration = max(.8, min(600, float(settings.get("manual_scene_duration", 6.0))))
+    total = voice_duration or manual_duration * count
+    if use_voice:
+        weight_total = sum(weights) or count
+        raw = [max(2.0, total * w / weight_total) for w in weights]
+        scale = total / sum(raw) if raw else 1
+        durations = [round(value * scale, 3) for value in raw]
+        if durations:
+            durations[-1] = round(max(0.5, total - sum(durations[:-1])), 3)
+    else:
+        durations = [round(manual_duration, 3)] * count
     cursor = 0.0
     for scene, text, duration in zip(project["scenes"], chunks, durations):
         changed = scene.get("text") != text or abs(float(scene.get("duration", 0)) - duration) > .001
@@ -203,8 +211,8 @@ def analyze_project(project_id: str) -> dict:
         if changed:
             scene.update({"rendered": False, "status": "ready", "video": None})
     project["analysis"] = {
-        "voice_duration": round(voice_duration, 3) if voice_duration else None,
-        "total_duration": round(total, 3), "mode": "voice" if voice_duration else "estimated",
+        "voice_duration": round(detected_voice_duration, 3) if detected_voice_duration else None,
+        "total_duration": round(total, 3), "mode": "voice" if use_voice else "manual",
     }
     generate_subtitles(project)
     return save_project(project)
@@ -216,7 +224,8 @@ def update_project(project_id: str, payload: dict) -> dict:
         project["script"] = str(payload["script"])
     settings = payload.get("settings", {})
     allowed = {"aspect", "fps", "resolution", "ink_color", "ink_path", "color_fill",
-               "voice_volume", "music_volume", "subtitles", "channel_name"}
+               "voice_volume", "music_volume", "subtitles", "channel_name",
+               "timing_mode", "manual_scene_duration"}
     old_settings = dict(project["settings"])
     for key in allowed:
         if key in settings:

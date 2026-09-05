@@ -6,11 +6,12 @@
   <title>SRT Whiteboard Studio</title>
   <link rel="stylesheet" href="/static/styles.css">
   <link rel="stylesheet" href="/static/responsive.css">
+  <link rel="stylesheet" href="/static/dashboard.css">
 </head>
-<body>
+<body class="dark">
   <header class="topbar">
     <div class="brand"><span class="mark">✎</span><div><strong>SRT Whiteboard Studio</strong><small>Dựng video vẽ tay ngay trên máy</small></div></div>
-    <div class="local"><i></i> LOCAL · dữ liệu không rời máy</div>
+    <div class="top-actions"><button id="themeToggle" class="top-chip">☀ Giao diện sáng</button><span class="top-chip server"><i></i><span id="serverText">Server local đã kết nối</span></span></div>
   </header>
 
   <main class="shell">
@@ -53,7 +54,8 @@
         <div class="studio-head"><div><span class="pill">DỰ ÁN</span><h1 id="studioTitle"></h1><p id="studioMeta"></p></div><div class="head-actions"><button id="saveProject" class="secondary">Lưu thay đổi</button><button id="renderAll" class="primary">▶ Dựng toàn bộ</button></div></div>
 
         <section class="panel settings-panel">
-          <div class="section-title"><div><span class="step">02</span><h2>Thiết lập đầu ra</h2></div><button id="reanalyze" class="text-button">↻ Căn lại theo voice</button></div>
+          <div class="section-title"><div><span class="step">02</span><h2>Nguồn và cấu hình</h2></div><button id="reanalyze" class="text-button">↻ Căn lại</button></div>
+          <div id="assetSummary" class="asset-summary"></div>
           <div class="settings-grid">
             <label>Tỷ lệ<select id="aspect"><option>9:16</option><option>16:9</option></select></label>
             <label>Độ phân giải<select id="resolution"><option value="1080p">Full HD</option><option value="720p">HD xem thử</option></select></label>
@@ -61,6 +63,10 @@
             <label>Màu nét<input id="inkColor" type="color"></label>
             <label>Đường bút<select id="inkPath"><option value="grid">Lưới ổn định</option><option value="skeleton">Bám nét</option></select></label>
             <label>Tô màu<select id="colorFill"><option value="contour-wipe">Quét đường viền</option><option value="brush">Tô theo bút</option></select></label>
+          </div>
+          <div class="timing-grid">
+            <label>Mốc thời lượng<select id="timingMode"><option value="voice">Tự khớp theo voice</option><option value="manual">Thủ công theo cảnh</option></select></label>
+            <label>Thời lượng mặc định (giây)<input id="manualDuration" type="number" min=".8" max="600" step=".1"></label>
           </div>
           <div class="audio-grid">
             <label>Âm lượng voice <output id="voiceOut"></output><input id="voiceVolume" type="range" min="0" max="2" step="0.05"></label>
@@ -72,7 +78,7 @@
 
         <section class="panel script-panel"><div class="section-title"><div><span class="step">03</span><h2>Kịch bản và thời gian</h2><p id="analysisInfo"></p></div></div><textarea id="studioScript" rows="6"></textarea></section>
 
-        <section class="scenes-section"><div class="section-title"><div><span class="step">04</span><h2>Các cảnh</h2><p>Ảnh đã được sắp xếp tự nhiên theo số trong tên file.</p></div><button id="mergeOnly" class="secondary">Ghép các cảnh đã dựng</button></div><div id="sceneGrid" class="scene-grid"></div></section>
+        <section class="scenes-section"><div class="section-title"><div><span class="step">04</span><h2>Danh sách các cảnh</h2><p id="sceneSummary">Ảnh đã được sắp xếp tự nhiên theo số trong tên file.</p></div><button id="mergeOnly" class="secondary">Ghép các cảnh đã dựng</button></div><div id="sceneGrid" class="scene-grid"></div></section>
 
         <section id="outputPanel" class="panel output-panel hidden"><div><span class="done-icon">✓</span><div><h2>Video đã sẵn sàng</h2><p>MP4 đã ghép, trộn âm thanh và phụ đề.</p></div></div><a id="downloadFinal" class="primary" href="#">Tải MP4</a></section>
       </div>

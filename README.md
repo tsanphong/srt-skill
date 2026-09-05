@@ -148,7 +148,8 @@ python scripts/render_annotation_preview.py <图片路径> <标注路径> <预�
 srt-whiteboard-animation/
 ├── SKILL.md                         # 完整工作流与约束
 ├── assets/
-│   ├── drawing-hand.png              # 手部素材
+│   ├── drawing-hand.png              # 原始手部素材
+│   ├── drawing-hand-clean.png        # 应用默认使用的无文字手部素材
 │   ├── preview.html                  # 本地编辑预览台
 ├── examples/                         # README 案例素材
 ├── scripts/

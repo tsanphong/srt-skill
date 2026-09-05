@@ -20,7 +20,7 @@ from PIL import Image
 ROOT = Path(__file__).resolve().parents[1]
 WORKSPACE = ROOT / "workspace" / "projects"
 RENDERER = ROOT / "scripts" / "render_stream_whiteboard.py"
-HAND = ROOT / "assets" / "drawing-hand.png"
+HAND = ROOT / "assets" / "drawing-hand-clean.png"
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff"}
 AUDIO_EXTENSIONS = {".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg", ".webm"}
 

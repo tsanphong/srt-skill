@@ -36,7 +36,7 @@ _SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(_SCRIPT_DIR))
 import stream_render as sr  # noqa: E402
 
-DEFAULT_HAND = _SCRIPT_DIR.parent / "assets" / "drawing-hand.png"
+DEFAULT_HAND = _SCRIPT_DIR.parent / "assets" / "drawing-hand-clean.png"
 
 
 # ──────────────────────────────────────────────────────────────

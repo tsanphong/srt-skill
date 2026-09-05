@@ -2,6 +2,8 @@
 
 Ứng dụng biến một nhóm ảnh thành video bàn tay vẽ, sau đó ghép voice, nhạc nền, phụ đề và tên kênh thành MP4. Máy chủ chỉ lắng nghe tại `127.0.0.1`; hình ảnh, âm thanh, kịch bản và video nằm trong thư mục `workspace/` trên máy, không được gửi đến dịch vụ bên ngoài.
 
+Ứng dụng dùng `assets/drawing-hand-clean.png`, một bàn tay cầm bút không có chữ hoặc logo trên thân bút.
+
 ## Khởi động nhanh trên Windows
 
 1. Giải nén hoặc clone repository vào đường dẫn không bị giới hạn quyền ghi.

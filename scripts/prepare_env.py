@@ -30,6 +30,8 @@ DEPS: dict[str, str] = {
     "numpy": "numpy",
     "av": "av",  # PyAV：纯 pip 安装的 H.264 编码，无需系统 ffmpeg
     "PIL": "Pillow",  # render_annotation_preview.py 画区域编号预览图（含中文标签）
+    "flask": "Flask",  # 本地工作台服务器
+    "imageio_ffmpeg": "imageio-ffmpeg",  # 随应用提供本地 FFmpeg，无需手工安装
 }
 
 

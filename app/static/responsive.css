@@ -1,0 +1,7 @@
+@media (max-width: 1000px) {
+  .sidebar { display:flex; padding:12px; gap:10px; overflow-x:auto; border-right:0; border-bottom:1px solid var(--line); }
+  .sidebar .wide { width:auto; white-space:nowrap; }
+  .sidebar .eyebrow, .sidebar .help-card { display:none; }
+  .sidebar .project-list { display:flex; gap:7px; }
+  .sidebar .project-item { min-width:190px; }
+}

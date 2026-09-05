@@ -24,6 +24,7 @@ import argparse
 import datetime
 import json
 import math
+import re
 import sys
 from pathlib import Path
 
@@ -97,6 +98,11 @@ class RegionStreamRenderer:
         self.active_all = sr._active_mask(self.thresh_map, cfg.grid_edge, cfg.ink_threshold)
         self.ink_pixels = self.thresh_map < cfg.ink_threshold
         self.ink_paint = np.repeat(self.thresh_map[:, :, None], 3, axis=2).astype(np.float32)
+        if cfg.ink_hex:
+            ink_color = sr._hex_to_bgr(cfg.ink_hex).astype(np.float32)
+            canvas_color = self.canvas_bgr.astype(np.float32)
+            darkness = (1.0 - self.thresh_map.astype(np.float32) / 255.0)[:, :, None]
+            self.ink_paint = canvas_color * (1.0 - darkness) + ink_color * darkness
 
         # 背景染成画布底色，让上色阶段背景与起笔一致（不碰墨迹）
         if cfg.match_bg:
@@ -475,6 +481,8 @@ def _parse_args(argv=None):
     p.add_argument("--brush-radius", type=int, default=None)
     p.add_argument("--cap-long-edge", type=int, default=None,
                    help="输出长边像素上限（预览可调小加速，默认 1080）")
+    p.add_argument("--ink-color", default=None,
+                   help="墨迹颜色，例如 #222831；缺省时保持原图灰度")
     return p.parse_args(argv)
 
 
@@ -491,6 +499,10 @@ def _build_cfg(args) -> sr.Config:
     kw["ink_path_mode"] = args.ink_path
     kw["color_fill"] = args.color_fill
     kw["pause_mode"] = args.pause
+    if args.ink_color is not None:
+        if not re.fullmatch(r"#[0-9a-fA-F]{6}", args.ink_color):
+            raise ValueError("--ink-color 必须是 #RRGGBB")
+        kw["ink_hex"] = args.ink_color
     return sr.Config(**kw)
 
 

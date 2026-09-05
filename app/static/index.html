@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>SRT Whiteboard Studio</title>
+  <link rel="stylesheet" href="/static/styles.css">
+  <link rel="stylesheet" href="/static/responsive.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><span class="mark">✎</span><div><strong>SRT Whiteboard Studio</strong><small>Dựng video vẽ tay ngay trên máy</small></div></div>
+    <div class="local"><i></i> LOCAL · dữ liệu không rời máy</div>
+  </header>
+
+  <main class="shell">
+    <aside class="sidebar">
+      <button id="newProject" class="primary wide">＋ Dự án mới</button>
+      <p class="eyebrow">DỰ ÁN GẦN ĐÂY</p>
+      <div id="projectList" class="project-list"></div>
+      <div class="help-card"><strong>Cần trợ giúp?</strong><span>Mở <code>HUONG-DAN-APP.md</code> trong thư mục dự án.</span></div>
+    </aside>
+
+    <section class="content">
+      <div id="welcome" class="welcome">
+        <div class="hero-copy">
+          <span class="pill">WHITEBOARD VIDEO WORKFLOW</span>
+          <h1>Biến hình ảnh và lời thoại thành video vẽ tay.</h1>
+          <p>Nhập kịch bản, thả ảnh theo lô, thêm voice và nhạc. Ứng dụng tự sắp xếp, căn thời lượng, dựng từng cảnh rồi ghép thành MP4.</p>
+          <button id="heroStart" class="primary">Bắt đầu dự án</button>
+        </div>
+        <div class="hero-art"><div class="paper"><span class="line l1"></span><span class="line l2"></span><span class="line l3"></span><span class="pencil">✎</span></div></div>
+        <div class="features"><article><b>01</b><strong>Tự sắp xếp</strong><span>Nhận nhiều ảnh hoặc cả thư mục, xếp đúng thứ tự số.</span></article><article><b>02</b><strong>Căn theo voice</strong><span>Đo thời lượng lời thoại và chia kịch bản theo từng cảnh.</span></article><article><b>03</b><strong>Sửa riêng từng cảnh</strong><span>Dựng lại cảnh lỗi mà không phải làm lại toàn bộ.</span></article></div>
+      </div>
+
+      <form id="createView" class="hidden panel create-panel">
+        <div class="section-title"><div><span class="step">01</span><h2>Tạo dự án mới</h2><p>Chọn tài nguyên đầu vào. Mọi file được sao chép vào workspace riêng.</p></div></div>
+        <label>Tên dự án<input id="projectName" required placeholder="Ví dụ: Video nuôi dạy con"></label>
+        <div class="upload-grid">
+          <div class="upload-zone" id="imageZone"><span class="upload-icon">▧</span><strong>Ảnh cảnh</strong><small>PNG, JPG, WEBP · chọn nhiều ảnh</small><div><button type="button" id="pickImages" class="secondary">Chọn ảnh</button><button type="button" id="pickFolder" class="ghost">Chọn thư mục</button></div><em id="imageCount">Chưa chọn ảnh</em></div>
+          <div class="upload-zone compact"><span class="upload-icon">♬</span><strong>Voice</strong><small>MP3, WAV, M4A, FLAC</small><button type="button" data-pick="voiceInput" class="secondary">Chọn voice</button><em id="voiceName">Không bắt buộc</em></div>
+          <div class="upload-zone compact"><span class="upload-icon">♫</span><strong>Nhạc nền</strong><small>MP3, WAV, M4A, FLAC</small><button type="button" data-pick="musicInput" class="secondary">Chọn nhạc</button><em id="musicName">Không bắt buộc</em></div>
+        </div>
+        <input id="imagesInput" type="file" multiple accept="image/*" hidden>
+        <input id="folderInput" type="file" webkitdirectory multiple accept="image/*" hidden>
+        <input id="voiceInput" type="file" accept="audio/*" hidden>
+        <input id="musicInput" type="file" accept="audio/*" hidden>
+        <div class="script-box"><div class="label-row"><label for="scriptInput">Kịch bản</label><button type="button" data-pick="scriptFile" class="text-button">Tải file TXT</button></div><textarea id="scriptInput" rows="9" placeholder="Dán kịch bản vào đây. Mỗi đoạn hoặc câu sẽ được phân bổ theo thời lượng voice..."></textarea><input id="scriptFile" type="file" accept=".txt,text/plain" hidden></div>
+        <div class="form-actions"><button type="button" id="cancelCreate" class="ghost">Hủy</button><button class="primary" type="submit">Tạo và tự căn chỉnh →</button></div>
+      </form>
+
+      <div id="studioView" class="hidden">
+        <div class="studio-head"><div><span class="pill">DỰ ÁN</span><h1 id="studioTitle"></h1><p id="studioMeta"></p></div><div class="head-actions"><button id="saveProject" class="secondary">Lưu thay đổi</button><button id="renderAll" class="primary">▶ Dựng toàn bộ</button></div></div>
+
+        <section class="panel settings-panel">
+          <div class="section-title"><div><span class="step">02</span><h2>Thiết lập đầu ra</h2></div><button id="reanalyze" class="text-button">↻ Căn lại theo voice</button></div>
+          <div class="settings-grid">
+            <label>Tỷ lệ<select id="aspect"><option>9:16</option><option>16:9</option></select></label>
+            <label>Độ phân giải<select id="resolution"><option value="1080p">Full HD</option><option value="720p">HD xem thử</option></select></label>
+            <label>FPS<select id="fps"><option>30</option><option>60</option></select></label>
+            <label>Màu nét<input id="inkColor" type="color"></label>
+            <label>Đường bút<select id="inkPath"><option value="grid">Lưới ổn định</option><option value="skeleton">Bám nét</option></select></label>
+            <label>Tô màu<select id="colorFill"><option value="contour-wipe">Quét đường viền</option><option value="brush">Tô theo bút</option></select></label>
+          </div>
+          <div class="audio-grid">
+            <label>Âm lượng voice <output id="voiceOut"></output><input id="voiceVolume" type="range" min="0" max="2" step="0.05"></label>
+            <label>Âm lượng nhạc <output id="musicOut"></output><input id="musicVolume" type="range" min="0" max="1" step="0.01"></label>
+            <label>Tên kênh<input id="channelName" placeholder="Hiện nhỏ ở góc trên"></label>
+            <label class="toggle"><input id="subtitles" type="checkbox"><span></span> Ghi phụ đề vào video</label>
+          </div>
+        </section>
+
+        <section class="panel script-panel"><div class="section-title"><div><span class="step">03</span><h2>Kịch bản và thời gian</h2><p id="analysisInfo"></p></div></div><textarea id="studioScript" rows="6"></textarea></section>
+
+        <section class="scenes-section"><div class="section-title"><div><span class="step">04</span><h2>Các cảnh</h2><p>Ảnh đã được sắp xếp tự nhiên theo số trong tên file.</p></div><button id="mergeOnly" class="secondary">Ghép các cảnh đã dựng</button></div><div id="sceneGrid" class="scene-grid"></div></section>
+
+        <section id="outputPanel" class="panel output-panel hidden"><div><span class="done-icon">✓</span><div><h2>Video đã sẵn sàng</h2><p>MP4 đã ghép, trộn âm thanh và phụ đề.</p></div></div><a id="downloadFinal" class="primary" href="#">Tải MP4</a></section>
+      </div>
+    </section>
+  </main>
+
+  <div id="progressOverlay" class="overlay hidden"><div class="progress-card"><span class="spinner">✎</span><h2 id="progressTitle">Đang dựng video</h2><p id="progressMessage">Đang chuẩn bị...</p><div class="progress-track"><i id="progressBar"></i></div><strong id="progressValue">0%</strong><button id="closeProgress" class="secondary hidden">Đóng</button></div></div>
+  <div id="toast" class="toast hidden"></div>
+  <script src="/static/app.js"></script>
+</body>
+</html>

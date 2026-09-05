@@ -2,6 +2,10 @@
 
 Đây là bản sao từ [geeklee/srt-whiteboard-animation](https://github.com/geeklee/srt-whiteboard-animation), giữ nguyên README.md, SKILL.md và giấy phép MIT. Đọc hai tài liệu gốc trước khi tạo dự án.
 
+## Ứng dụng local có giao diện
+
+Nhấp đúp `START_WHITEBOARD_APP.bat` để mở **SRT Whiteboard Studio** tại `http://127.0.0.1:7860`. Ứng dụng hỗ trợ chọn nhiều ảnh/thư mục, tự sắp xếp, căn thời lượng theo voice, chỉnh từng cảnh, phối nhạc, phụ đề, tên kênh, xuất 9:16 hoặc 16:9, dựng lại cảnh lỗi và ghép MP4. Xem hướng dẫn đầy đủ tại [HUONG-DAN-APP.md](HUONG-DAN-APP.md).
+
 Đã kiểm tra với Python 3.12.14, OpenCV, NumPy, PyAV và Pillow. Bản này sửa lỗi gọi hàm khi vùng không có nét, giữ thời lượng vùng bị che hoàn toàn, và sửa mốc thời gian khi ghép từ cảnh thứ hai bằng PyAV.
 
 ## Chuẩn bị môi trường riêng

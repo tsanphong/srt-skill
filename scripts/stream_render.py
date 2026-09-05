@@ -62,6 +62,7 @@ class Config:
     gaze_seconds: float = 3.0      # 凝视段基准秒数
     ink_threshold: int = 10        # 像素灰度低于此值视为“墨迹”
     ink_reveal_radius: int = 4     # 笔尖每段轨迹可揭示线稿的半径
+    ink_hex: str | None = None     # 可选墨色；为空时保持原图灰度线稿
     target_hand_height: int = 493  # 手部素材缩放后的目标高度（按 1080p 调校）
     # 笔尖在素材中的归一化坐标（0..1），决定落墨点对齐到素材的哪个像素。
     # 内置 drawing-hand.png 裁剪后，笔尖落在图像左上角，故锚点取 (0, 0)。

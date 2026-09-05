@@ -14,3 +14,6 @@ Thumbs.db
 
 # Local verification artifacts
 outputs/
+
+# Local Studio user projects and jobs
+workspace/

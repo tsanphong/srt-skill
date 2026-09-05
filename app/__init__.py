@@ -1,0 +1,1 @@
+"""Local whiteboard studio package."""

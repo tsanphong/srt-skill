@@ -1,6 +1,7 @@
 const $ = (s, root=document) => root.querySelector(s);
 const $$ = (s, root=document) => [...root.querySelectorAll(s)];
 let state = { project: null, images: [], jobs: new Map(), polls: new Map() };
+let voicePreviewState = { index: null, end: 0 };
 
 function show(view){ ['welcome','createView','studioView'].forEach(id=>$('#'+id).classList.toggle('hidden',id!==view)); }
 function toast(message,error=false){ const box=$('#toast'); box.textContent=message; box.className='toast'+(error?' error':''); setTimeout(()=>box.classList.add('hidden'),3500); }
@@ -54,27 +55,56 @@ function renderStudio(){
   $('#analysisInfo').textContent=a.mode==='voice'?`Đã căn theo voice ${Number(a.voice_duration).toFixed(2)} giây.`:`Thời lượng thủ công ${Number(a.total_duration||0).toFixed(2)} giây.`;
   const completed=p.scenes.filter(scene=>scene.rendered).length;
   $('#sceneSummary').textContent=`${p.scenes.length} cảnh · ${completed} đã dựng · ${p.scenes.length-completed} chờ dựng · tự sắp xếp theo số.`;
-  $('#sceneGrid').innerHTML=p.scenes.map(scene=>sceneCard(scene,p.id)).join('');
+  $('#sceneGrid').innerHTML=p.scenes.map(scene=>sceneCard(scene,p)).join('');
   $$('.render-scene').forEach(button=>button.onclick=()=>startScene(Number(button.dataset.index)));
+  $$('.preview-voice').forEach(button=>button.onclick=()=>previewSceneVoice(Number(button.dataset.index)).catch(error=>toast(error.message||'Không phát được voice.',true)));
+  $$('.cut-voice-here').forEach(button=>button.onclick=()=>cutVoiceAtCurrentPosition(Number(button.dataset.index)));
+  $$('.apply-voice-trim').forEach(button=>button.onclick=()=>applyVoiceTrim(Number(button.dataset.index)));
+  $$('.voice-trim-start,.voice-trim-end').forEach(input=>input.oninput=()=>updateVoiceTrimSummary(Number(input.closest('.scene-card').dataset.index)));
   restoreActiveProgress();
   $('#outputPanel').classList.toggle('hidden',!p.final_video);
   $('#downloadFinal').href=`/api/projects/${p.id}/download`;
 }
 
-function sceneCard(scene,id){
+function sceneCard(scene,project){
+  const id=project.id,hasVoice=project.audio.voice&&scene.voice_start!=null&&scene.voice_end!=null;
+  const sourceDuration=hasVoice?Math.max(.5,Number(scene.voice_end)-Number(scene.voice_start)):0;
+  const trimStart=Number(scene.voice_trim_start||0),trimEnd=Number(scene.voice_trim_end||0);
+  const voiceEditor=hasVoice?`<div class="voice-editor"><div class="voice-editor-head"><strong>♬ Voice phân cảnh</strong><span class="voice-remaining">Còn ${(sourceDuration-trimStart-trimEnd).toFixed(2)} giây</span></div><div class="voice-actions"><button type="button" class="ghost preview-voice" data-index="${scene.index}">▶ Nghe đoạn voice</button><button type="button" class="ghost cut-voice-here" data-index="${scene.index}">✂ Cắt cuối tại đây</button></div><div class="voice-trim-grid"><label>Cắt đầu (giây)<input class="voice-trim-start" type="number" min="0" max="${Math.max(0,sourceDuration-.5).toFixed(3)}" step=".05" value="${trimStart}"></label><label>Cắt cuối (giây)<input class="voice-trim-end" type="number" min="0" max="${Math.max(0,sourceDuration-.5).toFixed(3)}" step=".05" value="${trimEnd}"></label></div>${scene.index===project.scenes.length?'<small class="trim-hint">Nghe đến trước câu thông báo AI, rồi bấm “Cắt cuối tại đây”.</small>':''}<button type="button" class="secondary apply-voice-trim" data-index="${scene.index}">Áp dụng cắt voice</button></div>`:'';
   return `<article class="scene-card" data-index="${scene.index}">
     <div class="scene-media" id="media-${scene.index}">${scene.rendered?`<video controls preload="metadata" poster="/api/projects/${id}/images/${scene.index}" src="/api/projects/${id}/scenes/${scene.index}/video"></video>`:`<img loading="lazy" src="/api/projects/${id}/images/${scene.index}" alt="Cảnh ${scene.index}">`}<span class="scene-no">CẢNH ${String(scene.index).padStart(2,'0')}</span><span class="scene-status ${scene.rendered?'done':'waiting'}">${scene.rendered?'✓ ĐÃ DỰNG':'⌛ CHỜ DỰNG'}</span><div class="scene-progress hidden"><strong>Đang chờ dựng…</strong><div class="scene-progress-track"><i></i></div><span>0%</span></div></div>
     <div class="scene-body"><div class="scene-name"><strong>${esc(scene.image)}</strong><small title="${esc(scene.source_name)}">${esc(scene.source_name)}</small></div>
       <div class="scene-controls"><label>Thời lượng (giây)<input class="scene-duration" type="number" min=".8" max="600" step=".1" value="${scene.duration}"></label><label>Tốc độ vẽ<select class="scene-speed">${[.5,.75,1,1.25,1.5,2,3].map(x=>`<option value="${x}" ${x===scene.speed?'selected':''}>${x}×</option>`).join('')}</select></label></div>
-      <textarea class="scene-text" rows="3" placeholder="Phụ đề cho cảnh">${esc(scene.text)}</textarea>
+      <textarea class="scene-text" rows="3" placeholder="Phụ đề cho cảnh">${esc(scene.text)}</textarea>${voiceEditor}
       <div class="scene-actions"><button class="secondary render-scene" data-index="${scene.index}">${scene.rendered?'↻ Dựng lại cảnh':'▶ Dựng cảnh'}</button></div>
     </div></article>`;
 }
 
 function showVolume(){ $('#voiceOut').textContent=`${Math.round($('#voiceVolume').value*100)}%`;$('#musicOut').textContent=`${Math.round($('#musicVolume').value*100)}%`; }
 function syncTimingMode(){const manual=$('#timingMode').value==='manual';$('#manualDuration').disabled=!manual;$('#manualDuration').parentElement.classList.toggle('disabled',!manual)}
+function voiceBounds(index){
+  const scene=state.project.scenes.find(item=>item.index===index),card=$(`.scene-card[data-index="${index}"]`);if(!scene||!card||scene.voice_start==null)return null;
+  const sourceStart=Number(scene.voice_start),sourceEnd=Number(scene.voice_end),base=Math.max(.5,sourceEnd-sourceStart);
+  const trimStart=Math.max(0,Math.min(base-.5,Number($('.voice-trim-start',card)?.value||0)));
+  const trimEnd=Math.max(0,Math.min(base-trimStart-.5,Number($('.voice-trim-end',card)?.value||0)));
+  return {scene,card,start:sourceStart+trimStart,end:sourceEnd-trimEnd,trimStart,trimEnd,remaining:base-trimStart-trimEnd};
+}
+function updateVoiceTrimSummary(index){const bounds=voiceBounds(index);if(!bounds)return;$('.voice-remaining',bounds.card).textContent=`Còn ${bounds.remaining.toFixed(2)} giây`;$('.scene-duration',bounds.card).value=bounds.remaining.toFixed(3)}
+function stopVoicePreview(){const player=$('#voicePreview');player.pause();$$('.preview-voice').forEach(button=>button.textContent='▶ Nghe đoạn voice');voicePreviewState={index:null,end:0}}
+async function previewSceneVoice(index){
+  const bounds=voiceBounds(index),player=$('#voicePreview');if(!bounds)return toast('Phân cảnh này chưa có đoạn voice.',true);
+  if(voicePreviewState.index===index&&!player.paused){stopVoicePreview();return}
+  if(player.dataset.project!==state.project.id){player.src=`/api/projects/${state.project.id}/voice`;player.dataset.project=state.project.id;player.load();if(player.readyState<1)await new Promise((resolve,reject)=>{player.addEventListener('loadedmetadata',resolve,{once:true});player.addEventListener('error',reject,{once:true})})}
+  stopVoicePreview();voicePreviewState={index,end:bounds.end};player.currentTime=bounds.start;await player.play();const button=$(`.preview-voice[data-index="${index}"]`);if(button)button.textContent='■ Dừng nghe';
+}
+function cutVoiceAtCurrentPosition(index){
+  const player=$('#voicePreview'),bounds=voiceBounds(index);if(!bounds||voicePreviewState.index!==index)return toast('Hãy bấm “Nghe đoạn voice” trước, rồi cắt tại vị trí mong muốn.',true);
+  const trim=Math.max(0,Number(bounds.scene.voice_end)-player.currentTime),input=$('.voice-trim-end',bounds.card);input.value=trim.toFixed(3);updateVoiceTrimSummary(index);stopVoicePreview();toast('Đã đặt điểm cắt. Bấm “Áp dụng cắt voice” để lưu.')
+}
+async function applyVoiceTrim(index){try{stopVoicePreview();await save(false);renderStudio();toast(`Đã cắt voice cảnh ${index}. Hãy dựng lại cảnh này.`)}catch(e){toast(e.message,true)}}
+$('#voicePreview').ontimeupdate=()=>{const player=$('#voicePreview');if(voicePreviewState.index!=null&&player.currentTime>=voicePreviewState.end)stopVoicePreview()};
 function payload(){
-  return {script:$('#studioScript').value,settings:{aspect:$('#aspect').value,resolution:$('#resolution').value,fps:Number($('#fps').value),ink_color:$('#inkColor').value,ink_path:$('#inkPath').value,color_fill:$('#colorFill').value,voice_volume:Number($('#voiceVolume').value),music_volume:Number($('#musicVolume').value),channel_name:$('#channelName').value,subtitles:$('#subtitles').checked,timing_mode:$('#timingMode').value,manual_scene_duration:Number($('#manualDuration').value)},scenes:$$('.scene-card').map(card=>({index:Number(card.dataset.index),duration:Number($('.scene-duration',card).value),speed:Number($('.scene-speed',card).value),text:$('.scene-text',card).value}))};
+  return {script:$('#studioScript').value,settings:{aspect:$('#aspect').value,resolution:$('#resolution').value,fps:Number($('#fps').value),ink_color:$('#inkColor').value,ink_path:$('#inkPath').value,color_fill:$('#colorFill').value,voice_volume:Number($('#voiceVolume').value),music_volume:Number($('#musicVolume').value),channel_name:$('#channelName').value,subtitles:$('#subtitles').checked,timing_mode:$('#timingMode').value,manual_scene_duration:Number($('#manualDuration').value)},scenes:$$('.scene-card').map(card=>({index:Number(card.dataset.index),duration:Number($('.scene-duration',card).value),speed:Number($('.scene-speed',card).value),text:$('.scene-text',card).value,voice_trim_start:Number($('.voice-trim-start',card)?.value||0),voice_trim_end:Number($('.voice-trim-end',card)?.value||0)}))};
 }
 async function save(showToast=true){ if(!state.project)return;state.project=await api(`/api/projects/${state.project.id}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload())});if(showToast)toast('Đã lưu thay đổi.');return state.project; }
 async function reanalyze(){try{await save(false);state.project=await api(`/api/projects/${state.project.id}/analyze`,{method:'POST'});renderStudio();toast('Đã căn lại kịch bản theo voice.');}catch(e){toast(e.message,true)}}

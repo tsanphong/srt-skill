@@ -115,7 +115,19 @@ def project_path(project_id: str) -> Path:
 
 def load_project(project_id: str) -> dict:
     with PROJECT_STATE_LOCK:
-        return read_json(project_path(project_id) / "project.json")
+        project = read_json(project_path(project_id) / "project.json")
+        if project.get("audio", {}).get("voice") and project.get("analysis", {}).get("mode") == "voice":
+            voice_cursor = 0.0
+            for scene in project.get("scenes", []):
+                trim_start = float(scene.get("voice_trim_start") or 0.0)
+                trim_end = float(scene.get("voice_trim_end") or 0.0)
+                scene["voice_trim_start"], scene["voice_trim_end"] = trim_start, trim_end
+                source_duration = float(scene.get("duration", 0)) + trim_start + trim_end
+                if scene.get("voice_start") is None or scene.get("voice_end") is None:
+                    scene["voice_start"] = round(voice_cursor, 3)
+                    scene["voice_end"] = round(voice_cursor + source_duration, 3)
+                voice_cursor = float(scene["voice_end"])
+        return project
 
 
 def save_project(project: dict) -> dict:
@@ -212,14 +224,13 @@ def set_audio(project_id: str, kind: str, filename: str, data: bytes) -> dict:
     (root / "source" / "audio" / saved_name).write_bytes(data)
     project["audio"][kind] = saved_name
     project["final_video"] = None
+    if kind == "voice":
+        for scene in project["scenes"]:
+            scene["voice_trim_start"] = 0.0
+            scene["voice_trim_end"] = 0.0
     save_project(project)
     if kind == "voice":
-        if project["settings"].get("timing_mode", "voice") == "voice":
-            return analyze_project(project_id)
-        project = load_project(project_id)
-        duration = probe_duration(_audio_file(project, "voice"))
-        project.setdefault("analysis", {})["voice_duration"] = round(duration, 3) if duration else None
-        return save_project(project)
+        return analyze_project(project_id)
     return load_project(project_id)
 
 
@@ -245,10 +256,28 @@ def analyze_project(project_id: str) -> dict:
     else:
         durations = [round(manual_duration, 3)] * count
     cursor = 0.0
-    for scene, text, duration in zip(project["scenes"], chunks, durations):
+    voice_cursor = 0.0
+    for scene, text, source_duration in zip(project["scenes"], chunks, durations):
+        if use_voice:
+            voice_start = round(voice_cursor, 3)
+            voice_end = round(voice_cursor + source_duration, 3)
+            voice_cursor += source_duration
+            trim_start = max(0.0, float(scene.get("voice_trim_start", 0)))
+            trim_start = min(trim_start, max(0.0, source_duration - .5))
+            trim_end = max(0.0, float(scene.get("voice_trim_end", 0)))
+            trim_end = min(trim_end, max(0.0, source_duration - trim_start - .5))
+            duration = round(source_duration - trim_start - trim_end, 3)
+        else:
+            voice_start = voice_end = None
+            trim_start = trim_end = 0.0
+            duration = source_duration
         changed = scene.get("text") != text or abs(float(scene.get("duration", 0)) - duration) > .001
         scene["text"] = text
         scene["duration"] = duration
+        scene["voice_start"] = voice_start
+        scene["voice_end"] = voice_end
+        scene["voice_trim_start"] = round(trim_start, 3)
+        scene["voice_trim_end"] = round(trim_end, 3)
         scene["start"] = round(cursor, 3)
         scene["end"] = round(cursor + duration, 3)
         cursor += duration
@@ -256,7 +285,7 @@ def analyze_project(project_id: str) -> dict:
             scene.update({"rendered": False, "status": "ready", "video": None})
     project["analysis"] = {
         "voice_duration": round(detected_voice_duration, 3) if detected_voice_duration else None,
-        "total_duration": round(total, 3), "mode": "voice" if use_voice else "manual",
+        "total_duration": round(cursor, 3), "mode": "voice" if use_voice else "manual",
     }
     generate_subtitles(project)
     return save_project(project)
@@ -265,8 +294,11 @@ def analyze_project(project_id: str) -> dict:
 @synchronized_state
 def update_project(project_id: str, payload: dict) -> dict:
     project = load_project(project_id)
+    project_changed = False
     if "script" in payload:
-        project["script"] = str(payload["script"])
+        script = str(payload["script"])
+        project_changed = project_changed or script != project.get("script")
+        project["script"] = script
     settings = payload.get("settings", {})
     allowed = {"aspect", "fps", "resolution", "ink_color", "ink_path", "color_fill",
                "voice_volume", "music_volume", "subtitles", "channel_name",
@@ -275,14 +307,28 @@ def update_project(project_id: str, payload: dict) -> dict:
     for key in allowed:
         if key in settings:
             project["settings"][key] = settings[key]
+    project_changed = project_changed or old_settings != project["settings"]
     render_settings_changed = any(old_settings.get(key) != project["settings"].get(key)
                                   for key in ("fps", "ink_color", "ink_path", "color_fill"))
     scene_updates = {int(x["index"]): x for x in payload.get("scenes", []) if "index" in x}
+    voice_linked = project["settings"].get("timing_mode", "voice") == "voice" and project.get("audio", {}).get("voice")
     cursor = 0.0
     for scene in project["scenes"]:
         update = scene_updates.get(scene["index"], {})
         changed = render_settings_changed
-        if "duration" in update:
+        if voice_linked and scene.get("voice_start") is not None and scene.get("voice_end") is not None:
+            source_duration = max(.5, float(scene["voice_end"]) - float(scene["voice_start"]))
+            trim_start = max(0.0, float(update.get("voice_trim_start", scene.get("voice_trim_start", 0))))
+            trim_start = min(trim_start, max(0.0, source_duration - .5))
+            trim_end = max(0.0, float(update.get("voice_trim_end", scene.get("voice_trim_end", 0))))
+            trim_end = min(trim_end, max(0.0, source_duration - trim_start - .5))
+            duration = round(source_duration - trim_start - trim_end, 3)
+            changed = changed or duration != scene.get("duration")
+            changed = changed or round(trim_start, 3) != scene.get("voice_trim_start", 0)
+            changed = changed or round(trim_end, 3) != scene.get("voice_trim_end", 0)
+            scene["voice_trim_start"], scene["voice_trim_end"] = round(trim_start, 3), round(trim_end, 3)
+            scene["duration"] = duration
+        elif "duration" in update:
             value = round(max(0.8, min(600, float(update["duration"]))), 3)
             changed = changed or value != scene.get("duration")
             scene["duration"] = value
@@ -298,7 +344,10 @@ def update_project(project_id: str, payload: dict) -> dict:
         cursor += scene["duration"]
         if changed:
             scene.update({"rendered": False, "status": "ready", "video": None})
+            project_changed = True
     project["analysis"]["total_duration"] = round(cursor, 3)
+    if project_changed:
+        project["final_video"] = None
     generate_subtitles(project)
     return save_project(project)
 
@@ -493,7 +542,42 @@ def merge_project(project_id: str, progress: Callable[[float, str], None] | None
     next_index = 1
     if voice:
         inputs += ["-i", str(voice)]
-        audio_filters.append(f"[{next_index}:a]volume={float(project['settings'].get('voice_volume',1.0))},apad=whole_dur={total}[voice]")
+        segments = []
+        for scene in project["scenes"]:
+            if scene.get("voice_start") is None or scene.get("voice_end") is None:
+                segments = []
+                break
+            start = float(scene["voice_start"]) + float(scene.get("voice_trim_start", 0))
+            end = float(scene["voice_end"]) - float(scene.get("voice_trim_end", 0))
+            if end - start < .05:
+                segments = []
+                break
+            segments.append((start, end))
+        if not any(float(scene.get("voice_trim_start", 0)) > 0 or float(scene.get("voice_trim_end", 0)) > 0
+                   for scene in project["scenes"]):
+            segments = []
+        volume = float(project["settings"].get("voice_volume", 1.0))
+        if len(segments) > 1:
+            sources = "".join(f"[voice-src-{i}]" for i in range(len(segments)))
+            audio_filters.append(f"[{next_index}:a]asplit={len(segments)}{sources}")
+            labels = []
+            for i, (start, end) in enumerate(segments):
+                label = f"voice-part-{i}"
+                audio_filters.append(
+                    f"[voice-src-{i}]atrim=start={start}:end={end},asetpts=PTS-STARTPTS[{label}]"
+                )
+                labels.append(f"[{label}]")
+            audio_filters.append(
+                "".join(labels) + f"concat=n={len(labels)}:v=0:a=1,volume={volume},apad=whole_dur={total}[voice]"
+            )
+        elif len(segments) == 1:
+            start, end = segments[0]
+            audio_filters.append(
+                f"[{next_index}:a]atrim=start={start}:end={end},asetpts=PTS-STARTPTS,"
+                f"volume={volume},apad=whole_dur={total}[voice]"
+            )
+        else:
+            audio_filters.append(f"[{next_index}:a]volume={volume},apad=whole_dur={total}[voice]")
         audio_labels.append("[voice]")
         next_index += 1
     if music:

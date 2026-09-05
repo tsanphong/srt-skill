@@ -23,6 +23,10 @@ Nếu trình duyệt không tự mở, nhập `http://127.0.0.1:7860` vào Edge 
    - Nếu chưa chọn voice hoặc nhạc lúc tạo dự án, dùng **Chọn voice/Chọn nhạc** trong bảng Nguồn và cấu hình. Hai nút này cũng cho phép thay file về sau.
    - Thay nhạc không ảnh hưởng các cảnh đã dựng; chỉ cần ghép lại MP4. Thay voice trong chế độ tự khớp sẽ tính lại thời lượng và các cảnh có thời lượng thay đổi cần được dựng lại.
 6. Với từng cảnh, sửa phụ đề, thời lượng và tốc độ vẽ. Tốc độ lớn hơn làm phần vẽ hoàn tất sớm hơn và giữ ảnh hoàn chỉnh lâu hơn trong cùng thời lượng cảnh.
+   - Khi dự án có voice và đang dùng **Tự khớp theo voice**, mỗi thẻ cảnh có bảng **Voice phân cảnh**.
+   - Bấm **Nghe đoạn voice** để nghe đúng phần âm thanh của cảnh. Có thể nhập số giây **Cắt đầu/Cắt cuối**.
+   - Để bỏ câu thông báo AI ở cuối voice CapCut: tại cảnh cuối, nghe tới ngay trước câu thông báo, bấm **Cắt cuối tại đây**, rồi bấm **Áp dụng cắt voice**.
+   - Sau khi áp dụng, thời lượng và phụ đề được dồn lại tự động; chỉ cảnh có thời lượng thay đổi cần dựng lại.
 7. Bấm **Dựng cảnh** để xem riêng. Thanh tiến trình nằm ngay giữa thẻ cảnh, nên bạn vẫn có thể xem, chỉnh sửa hoặc yêu cầu dựng các cảnh khác. Nếu cảnh lỗi, sửa thông số rồi bấm **Dựng lại cảnh**; các cảnh khác được giữ nguyên.
 8. Có thể chọn dựng nhiều cảnh. Ứng dụng xử lý tối đa 2 cảnh cùng lúc và tự xếp hàng các cảnh còn lại để không làm máy quá tải. Phần trăm được cập nhật theo số khung hình thực tế, gồm cả bước mã hóa H.264 cuối cảnh.
 9. Bấm **Dựng toàn bộ** để xử lý song song các cảnh chưa hoàn tất rồi tự ghép MP4.

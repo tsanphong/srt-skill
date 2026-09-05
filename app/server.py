@@ -138,6 +138,16 @@ def images_show(project_id: str, scene_index: int):
     return send_file(project_path(project_id) / "source" / "images" / scene["image"])
 
 
+@app.get("/api/projects/<project_id>/voice")
+def voice_show(project_id: str):
+    project = load_project(project_id)
+    filename = project.get("audio", {}).get("voice")
+    path = project_path(project_id) / "source" / "audio" / filename if filename else None
+    if not path or not path.exists():
+        return jsonify({"error": "Dự án chưa có voice"}), 404
+    return send_file(path, conditional=True)
+
+
 @app.get("/api/projects/<project_id>/scenes/<int:scene_index>/video")
 def scenes_video(project_id: str, scene_index: int):
     path = project_path(project_id) / "scenes" / f"scene-{scene_index:03d}.mp4"

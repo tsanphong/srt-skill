@@ -87,6 +87,37 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(project["audio"]["voice"], "voice.wav")
         self.assertAlmostEqual(project["analysis"]["voice_duration"], 3.25, places=2)
         self.assertAlmostEqual(project["scenes"][0]["duration"], 3.25, places=2)
+        self.assertEqual(project["scenes"][0]["voice_start"], 0.0)
+        self.assertAlmostEqual(project["scenes"][0]["voice_end"], 3.25, places=2)
+
+    def test_scene_voice_trim_shortens_timeline_and_invalidates_only_that_scene(self):
+        project = pipeline.create_project(
+            "Cắt voice",
+            [("1.png", png_bytes()), ("2.png", png_bytes())],
+            "Một. Hai.", ("voice.wav", wav_bytes(6)), None,
+        )
+        for scene in project["scenes"]:
+            scene.update({"rendered": True, "video": f"scene-{scene['index']:03d}.mp4", "status": "done"})
+        pipeline.save_project(project)
+        project = pipeline.update_project(project["id"], {
+            "scenes": [{"index": 2, "voice_trim_end": .75}],
+        })
+        self.assertTrue(project["scenes"][0]["rendered"])
+        self.assertFalse(project["scenes"][1]["rendered"])
+        self.assertAlmostEqual(project["scenes"][1]["voice_trim_end"], .75)
+        self.assertAlmostEqual(project["analysis"]["total_duration"], 5.25, places=2)
+        self.assertIsNone(project["final_video"])
+
+    def test_old_voice_project_gets_segment_boundaries_on_load(self):
+        project = pipeline.create_project("Tương thích", [("1.png", png_bytes())], "Một", ("voice.wav", wav_bytes(2)), None)
+        project["scenes"][0].pop("voice_start")
+        project["scenes"][0].pop("voice_end")
+        project["scenes"][0].pop("voice_trim_start")
+        project["scenes"][0].pop("voice_trim_end")
+        pipeline.save_project(project)
+        project = pipeline.load_project(project["id"])
+        self.assertEqual(project["scenes"][0]["voice_start"], 0.0)
+        self.assertAlmostEqual(project["scenes"][0]["voice_end"], 2.0, places=2)
 
     def test_batch_render_resumes_after_completed_scenes(self):
         project = pipeline.create_project("Tiếp tục", [("1.png", png_bytes()), ("2.png", png_bytes())], "Một. Hai.")

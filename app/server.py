@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import urllib.error
+import urllib.request
 import webbrowser
 from pathlib import Path
 from threading import Timer
@@ -146,6 +148,18 @@ def final_download(project_id: str):
     return send_file(path, mimetype="video/mp4", as_attachment=True, download_name=path.name)
 
 
+def existing_studio_url(host: str, port: int) -> str | None:
+    url = f"http://{host}:{port}"
+    try:
+        with urllib.request.urlopen(f"{url}/api/health", timeout=1) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        if payload.get("ok") and Path(payload.get("workspace", "")).resolve() == WORKSPACE.resolve():
+            return url
+    except (OSError, ValueError, urllib.error.URLError):
+        pass
+    return None
+
+
 def main(argv=None) -> None:
     parser = argparse.ArgumentParser(description="SRT Whiteboard Studio chạy local")
     parser.add_argument("--host", default="127.0.0.1")
@@ -153,6 +167,12 @@ def main(argv=None) -> None:
     parser.add_argument("--no-browser", action="store_true")
     args = parser.parse_args(argv)
     WORKSPACE.mkdir(parents=True, exist_ok=True)
+    running_url = existing_studio_url(args.host, args.port)
+    if running_url:
+        print(f"SRT Whiteboard Studio đang chạy: {running_url}")
+        if not args.no_browser:
+            webbrowser.open(running_url)
+        return
     if not args.no_browser:
         Timer(1.2, lambda: webbrowser.open(f"http://{args.host}:{args.port}")).start()
     print(f"SRT Whiteboard Studio: http://{args.host}:{args.port}")

@@ -180,6 +180,29 @@ def _audio_file(project: dict, kind: str) -> Path | None:
     return project_path(project["id"]) / "source" / "audio" / name if name else None
 
 
+def set_audio(project_id: str, kind: str, filename: str, data: bytes) -> dict:
+    if kind not in {"voice", "music"}:
+        raise ValueError("Loại âm thanh không hợp lệ")
+    suffix = Path(filename).suffix.lower()
+    if suffix not in AUDIO_EXTENSIONS or not data:
+        raise ValueError("File âm thanh không hợp lệ")
+    project = load_project(project_id)
+    root = project_path(project_id)
+    saved_name = f"{kind}{suffix}"
+    (root / "source" / "audio" / saved_name).write_bytes(data)
+    project["audio"][kind] = saved_name
+    project["final_video"] = None
+    save_project(project)
+    if kind == "voice":
+        if project["settings"].get("timing_mode", "voice") == "voice":
+            return analyze_project(project_id)
+        project = load_project(project_id)
+        duration = probe_duration(_audio_file(project, "voice"))
+        project.setdefault("analysis", {})["voice_duration"] = round(duration, 3) if duration else None
+        return save_project(project)
+    return load_project(project_id)
+
+
 def analyze_project(project_id: str) -> dict:
     project = load_project(project_id)
     count = len(project["scenes"])
@@ -478,8 +501,12 @@ JOBS = JobManager()
 
 def render_all(project_id: str, progress: Callable[[float, str], None]) -> Path:
     project = load_project(project_id)
-    total = len(project["scenes"])
-    for i, scene in enumerate(project["scenes"]):
+    root = project_path(project_id)
+    pending = [scene for scene in project["scenes"]
+               if not scene.get("rendered") or not scene.get("video")
+               or not (root / "scenes" / scene["video"]).exists()]
+    total = len(pending)
+    for i, scene in enumerate(pending):
         def scene_progress(value: float, message: str, i=i) -> None:
             progress((i + value / 100) / total * 88, message)
         render_scene(project_id, scene["index"], scene_progress)

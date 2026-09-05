@@ -78,6 +78,27 @@ class PipelineTests(unittest.TestCase):
         self.assertAlmostEqual(project["analysis"]["total_duration"], 9.0)
         self.assertEqual([x["duration"] for x in project["scenes"]], [4.5, 4.5])
 
+    def test_voice_can_be_added_after_project_creation(self):
+        project = pipeline.create_project("Thêm voice", [("1.png", png_bytes())], "Một cảnh")
+        self.assertIsNone(project["audio"]["voice"])
+        project = pipeline.set_audio(project["id"], "voice", "new.wav", wav_bytes(3.25))
+        self.assertEqual(project["audio"]["voice"], "voice.wav")
+        self.assertAlmostEqual(project["analysis"]["voice_duration"], 3.25, places=2)
+        self.assertAlmostEqual(project["scenes"][0]["duration"], 3.25, places=2)
+
+    def test_batch_render_resumes_after_completed_scenes(self):
+        project = pipeline.create_project("Tiếp tục", [("1.png", png_bytes()), ("2.png", png_bytes())], "Một. Hai.")
+        first = project["scenes"][0]
+        first.update({"rendered": True, "video": "scene-001.mp4", "status": "done"})
+        scene_file = self.temp / project["id"] / "scenes" / "scene-001.mp4"
+        scene_file.write_bytes(b"ready")
+        pipeline.save_project(project)
+        with patch.object(pipeline, "render_scene") as render, patch.object(pipeline, "merge_project", return_value=Path("final.mp4")):
+            result = pipeline.render_all(project["id"], lambda *_: None)
+        self.assertEqual(result, Path("final.mp4"))
+        self.assertEqual(render.call_count, 1)
+        self.assertEqual(render.call_args.args[1], 2)
+
 
 if __name__ == "__main__":
     unittest.main()

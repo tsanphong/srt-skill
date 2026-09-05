@@ -48,7 +48,8 @@ function renderStudio(){
   $('#channelName').value=s.channel_name;$('#subtitles').checked=s.subtitles;$('#studioScript').value=p.script;
   $('#timingMode').value=s.timing_mode||'voice';$('#manualDuration').value=s.manual_scene_duration||6;syncTimingMode();
   const voice=p.audio.voice||'Chưa chọn',music=p.audio.music||'Chưa chọn';
-  $('#assetSummary').innerHTML=`<div class="asset-row"><span>▧ ${p.scenes.length} ảnh đã sắp xếp</span><b>✓ SẴN SÀNG</b></div><div class="asset-row"><span title="${esc(voice)}">♬ Voice: ${esc(voice)}</span><b>${p.audio.voice?'✓ ĐÃ NẠP':'TÙY CHỌN'}</b></div><div class="asset-row"><span title="${esc(music)}">♫ Nhạc: ${esc(music)}</span><b>${p.audio.music?'✓ ĐÃ NẠP':'TÙY CHỌN'}</b></div><div class="asset-row"><span>ID: ${esc(p.id)}</span><b>LOCAL</b></div>`;
+  $('#assetSummary').innerHTML=`<div class="asset-row"><span>▧ ${p.scenes.length} ảnh đã sắp xếp</span><b>✓ SẴN SÀNG</b></div><div class="asset-row"><span title="${esc(voice)}">♬ Voice: ${esc(voice)}</span><button type="button" class="asset-button" data-audio="voice">${p.audio.voice?'Thay file':'Chọn voice'}</button></div><div class="asset-row"><span title="${esc(music)}">♫ Nhạc: ${esc(music)}</span><button type="button" class="asset-button" data-audio="music">${p.audio.music?'Thay file':'Chọn nhạc'}</button></div><div class="asset-row"><span>ID: ${esc(p.id)}</span><b>LOCAL</b></div>`;
+  $$('.asset-button').forEach(button=>button.onclick=()=>$('#studio'+(button.dataset.audio==='voice'?'Voice':'Music')+'Input').click());
   showVolume();
   $('#analysisInfo').textContent=a.mode==='voice'?`Đã căn theo voice ${Number(a.voice_duration).toFixed(2)} giây.`:`Thời lượng thủ công ${Number(a.total_duration||0).toFixed(2)} giây.`;
   const completed=p.scenes.filter(scene=>scene.rendered).length;
@@ -76,6 +77,7 @@ function payload(){
 }
 async function save(showToast=true){ if(!state.project)return;state.project=await api(`/api/projects/${state.project.id}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload())});if(showToast)toast('Đã lưu thay đổi.');return state.project; }
 async function reanalyze(){try{await save(false);state.project=await api(`/api/projects/${state.project.id}/analyze`,{method:'POST'});renderStudio();toast('Đã căn lại kịch bản theo voice.');}catch(e){toast(e.message,true)}}
+async function uploadProjectAudio(kind,file){if(!file||!state.project)return;const autoAlign=state.project.settings.timing_mode==='voice';const form=new FormData();form.append('file',file);progressOpen(kind==='voice'?'Đang cập nhật voice':'Đang cập nhật nhạc','Đang đọc file âm thanh…',35);try{state.project=await api(`/api/projects/${state.project.id}/audio/${kind}`,{method:'POST',body:form});progressClose();renderStudio();toast(kind==='voice'?(autoAlign?'Đã cập nhật voice và căn lại thời lượng.':'Đã cập nhật voice; thời lượng thủ công được giữ nguyên.'):'Đã cập nhật nhạc nền. Chỉ cần ghép lại video.')}catch(e){progressClose();toast(e.message,true)}}
 
 function progressOpen(title,message,value=0){$('#progressTitle').textContent=title;$('#progressMessage').textContent=message;$('#progressBar').style.width=value+'%';$('#progressValue').textContent=Math.round(value)+'%';$('#closeProgress').classList.add('hidden');$('#progressOverlay').classList.remove('hidden');}
 function progressClose(){clearInterval(state.poll);$('#progressOverlay').classList.add('hidden');}
@@ -92,6 +94,7 @@ $('#pickImages').onclick=()=>$('#imagesInput').click();$('#pickFolder').onclick=
 $('#imagesInput').onchange=e=>addImages(e.target.files);$('#folderInput').onchange=e=>addImages(e.target.files);
 $$('[data-pick]').forEach(button=>button.onclick=()=>$('#'+button.dataset.pick).click());
 $('#voiceInput').onchange=e=>$('#voiceName').textContent=e.target.files[0]?.name||'Không bắt buộc';$('#musicInput').onchange=e=>$('#musicName').textContent=e.target.files[0]?.name||'Không bắt buộc';
+$('#studioVoiceInput').onchange=e=>{uploadProjectAudio('voice',e.target.files[0]);e.target.value=''};$('#studioMusicInput').onchange=e=>{uploadProjectAudio('music',e.target.files[0]);e.target.value=''};
 $('#scriptFile').onchange=async e=>{const file=e.target.files[0];if(file)$('#scriptInput').value=await file.text()};
 const zone=$('#imageZone');['dragenter','dragover'].forEach(name=>zone.addEventListener(name,e=>{e.preventDefault();zone.classList.add('drag')}));['dragleave','drop'].forEach(name=>zone.addEventListener(name,e=>{e.preventDefault();zone.classList.remove('drag')}));zone.addEventListener('drop',e=>addImages(e.dataTransfer.files));
 $('#voiceVolume').oninput=$('#musicVolume').oninput=showVolume;$('#timingMode').onchange=syncTimingMode;$('#saveProject').onclick=()=>save();$('#reanalyze').onclick=reanalyze;$('#renderAll').onclick=startAll;$('#mergeOnly').onclick=mergeOnly;$('#closeProgress').onclick=progressClose;

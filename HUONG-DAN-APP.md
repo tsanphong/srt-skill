@@ -20,6 +20,8 @@ Nếu trình duyệt không tự mở, nhập `http://127.0.0.1:7860` vào Edge 
 3. Dán kịch bản hoặc tải TXT; chọn voice MP3/WAV và nhạc nền nếu có.
 4. Bấm **Tạo và tự căn chỉnh**. Khi có voice và chọn **Tự khớp theo voice**, tổng thời gian cảnh được căn theo đúng độ dài voice; kịch bản được chia theo trọng lượng câu. Chọn **Thủ công theo cảnh** để đặt một thời lượng mặc định rồi chỉnh từng cảnh.
 5. Chọn tỷ lệ 9:16 hoặc 16:9, độ phân giải, FPS, màu nét, kiểu đường bút và cách tô màu. Điều chỉnh âm lượng voice/nhạc, tên kênh và phụ đề.
+   - Nếu chưa chọn voice hoặc nhạc lúc tạo dự án, dùng **Chọn voice/Chọn nhạc** trong bảng Nguồn và cấu hình. Hai nút này cũng cho phép thay file về sau.
+   - Thay nhạc không ảnh hưởng các cảnh đã dựng; chỉ cần ghép lại MP4. Thay voice trong chế độ tự khớp sẽ tính lại thời lượng và các cảnh có thời lượng thay đổi cần được dựng lại.
 6. Với từng cảnh, sửa phụ đề, thời lượng và tốc độ vẽ. Tốc độ lớn hơn làm phần vẽ hoàn tất sớm hơn và giữ ảnh hoàn chỉnh lâu hơn trong cùng thời lượng cảnh.
 7. Bấm **Dựng cảnh** để xem riêng. Nếu cảnh lỗi, sửa thông số rồi bấm **Dựng lại cảnh**; các cảnh khác được giữ nguyên.
 8. Bấm **Dựng toàn bộ** để chạy lần lượt mọi cảnh và tự ghép MP4. Thanh tiến trình hiển thị trạng thái hiện tại.

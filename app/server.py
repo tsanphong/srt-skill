@@ -10,7 +10,7 @@ from flask import Flask, jsonify, request, send_file
 
 from .pipeline import (JOBS, WORKSPACE, analyze_project, create_project, list_projects,
                        load_project, merge_project, project_path, render_all, render_scene,
-                       update_project)
+                       set_audio, update_project)
 
 ROOT = Path(__file__).resolve().parents[1]
 app = Flask(__name__, static_folder=str(ROOT / "app" / "static"), static_url_path="/static")
@@ -71,6 +71,17 @@ def projects_update(project_id: str):
 def projects_analyze(project_id: str):
     try:
         return jsonify(analyze_project(project_id))
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@app.post("/api/projects/<project_id>/audio/<kind>")
+def projects_audio(project_id: str, kind: str):
+    upload = request.files.get("file")
+    if not upload or not upload.filename:
+        return jsonify({"error": "Chưa chọn file âm thanh"}), 400
+    try:
+        return jsonify(set_audio(project_id, kind, upload.filename, upload.read()))
     except Exception as exc:
         return jsonify({"error": str(exc)}), 400
 

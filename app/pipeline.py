@@ -28,6 +28,16 @@ RENDER_SLOTS = threading.BoundedSemaphore(2)
 PROJECT_STATE_LOCK = threading.RLock()
 ACTIVE_SCENES_LOCK = threading.Lock()
 ACTIVE_SCENES: set[tuple[str, int]] = set()
+SUBTITLE_FONTS = (
+    "Microsoft JhengHei", "Microsoft JhengHei UI", "Microsoft YaHei",
+    "Segoe UI", "Arial", "Tahoma",
+)
+SUBTITLE_DEFAULTS = {
+    "subtitle_position": "top",
+    "subtitle_color": "#FFFFFF",
+    "subtitle_font": "Microsoft JhengHei",
+    "subtitle_font_size": 54,
+}
 
 
 def synchronized_state(fn):
@@ -113,9 +123,26 @@ def project_path(project_id: str) -> Path:
     return path
 
 
+def _normalize_subtitle_settings(settings: dict) -> dict:
+    for key, value in SUBTITLE_DEFAULTS.items():
+        settings.setdefault(key, value)
+    if settings.get("subtitle_position") not in {"top", "bottom"}:
+        settings["subtitle_position"] = SUBTITLE_DEFAULTS["subtitle_position"]
+    color = str(settings.get("subtitle_color", "")).upper()
+    settings["subtitle_color"] = color if re.fullmatch(r"#[0-9A-F]{6}", color) else SUBTITLE_DEFAULTS["subtitle_color"]
+    if settings.get("subtitle_font") not in SUBTITLE_FONTS:
+        settings["subtitle_font"] = SUBTITLE_DEFAULTS["subtitle_font"]
+    try:
+        settings["subtitle_font_size"] = round(max(20, min(120, float(settings["subtitle_font_size"]))))
+    except (TypeError, ValueError):
+        settings["subtitle_font_size"] = SUBTITLE_DEFAULTS["subtitle_font_size"]
+    return settings
+
+
 def load_project(project_id: str) -> dict:
     with PROJECT_STATE_LOCK:
         project = read_json(project_path(project_id) / "project.json")
+        _normalize_subtitle_settings(project.setdefault("settings", {}))
         if project.get("audio", {}).get("voice") and project.get("analysis", {}).get("mode") == "voice":
             voice_cursor = 0.0
             for scene in project.get("scenes", []):
@@ -197,6 +224,7 @@ def create_project(name: str, images: list[tuple[str, bytes]], script: str = "",
             "aspect": "9:16", "fps": 30, "resolution": "1080p", "ink_color": "#222831",
             "ink_path": "grid", "color_fill": "contour-wipe", "voice_volume": 1.0,
             "music_volume": 0.18, "subtitles": True, "channel_name": "",
+            **SUBTITLE_DEFAULTS,
             "timing_mode": "voice", "manual_scene_duration": 6.0,
         },
         "analysis": {}, "final_video": None,
@@ -302,11 +330,13 @@ def update_project(project_id: str, payload: dict) -> dict:
     settings = payload.get("settings", {})
     allowed = {"aspect", "fps", "resolution", "ink_color", "ink_path", "color_fill",
                "voice_volume", "music_volume", "subtitles", "channel_name",
+               "subtitle_position", "subtitle_color", "subtitle_font", "subtitle_font_size",
                "timing_mode", "manual_scene_duration"}
     old_settings = dict(project["settings"])
     for key in allowed:
         if key in settings:
             project["settings"][key] = settings[key]
+    _normalize_subtitle_settings(project["settings"])
     project_changed = project_changed or old_settings != project["settings"]
     render_settings_changed = any(old_settings.get(key) != project["settings"].get(key)
                                   for key in ("fps", "ink_color", "ink_path", "color_fill"))
@@ -471,17 +501,29 @@ def _ass_time(seconds: float) -> str:
     return f"{cs // 360000:01}:{cs // 6000 % 60:02}:{cs // 100 % 60:02}.{cs % 100:02}"
 
 
+def _ass_color(value: str) -> str:
+    color = value.lstrip("#")
+    red, green, blue = color[0:2], color[2:4], color[4:6]
+    return f"&H00{blue}{green}{red}"
+
+
 def make_ass(project: dict, width: int, height: int) -> Path | None:
     settings = project["settings"]
+    _normalize_subtitle_settings(settings)
     if not settings.get("subtitles") and not settings.get("channel_name", "").strip():
         return None
     scale = height / 1920
-    font_size = round(54 * scale)
+    font_size = max(12, round(settings["subtitle_font_size"] * scale))
+    font_name = settings["subtitle_font"]
+    primary_color = _ass_color(settings["subtitle_color"])
+    subtitle_top = settings["subtitle_position"] == "top"
+    subtitle_alignment = 8 if subtitle_top else 2
+    subtitle_margin = round((140 if subtitle_top else 180) * scale)
     lines = [
         "[Script Info]", "ScriptType: v4.00+", f"PlayResX: {width}", f"PlayResY: {height}", "WrapStyle: 0", "ScaledBorderAndShadow: yes", "",
         "[V4+ Styles]",
         "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
-        f"Style: Subtitle,Microsoft JhengHei,{font_size},&H00FFFFFF,&H000000FF,&H96000000,&H96000000,-1,0,0,0,100,100,0,0,3,1,0,2,60,60,{round(180*scale)},1",
+        f"Style: Subtitle,{font_name},{font_size},{primary_color},&H000000FF,&H96000000,&H96000000,-1,0,0,0,100,100,0,0,3,1,0,{subtitle_alignment},60,60,{subtitle_margin},1",
         f"Style: Channel,Arial,{round(28*scale)},&HAAFFFFFF,&H000000FF,&H50000000,&H50000000,0,0,0,0,100,100,0,0,1,1,0,9,35,35,35,1", "",
         "[Events]", "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
     ]

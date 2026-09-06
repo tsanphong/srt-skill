@@ -54,6 +54,27 @@ class PipelineTests(unittest.TestCase):
         self.assertAlmostEqual(sum(x["duration"] for x in project["scenes"]), 6.0, places=2)
         self.assertEqual(project["analysis"]["mode"], "voice")
         self.assertTrue((self.temp / project["id"] / "source" / "subtitles.srt").exists())
+        self.assertEqual(project["settings"]["subtitle_position"], "top")
+
+    def test_subtitle_style_supports_position_color_font_and_size(self):
+        project = pipeline.create_project("Phụ đề", [("1.png", png_bytes())], "Xin chào")
+        project["scenes"][0].update({"start": 0.0, "end": 6.0})
+        project = pipeline.update_project(project["id"], {"settings": {
+            "subtitle_position": "bottom", "subtitle_color": "#12ABEF",
+            "subtitle_font": "Arial", "subtitle_font_size": 72,
+        }})
+        ass = pipeline.make_ass(project, 1080, 1920).read_text(encoding="utf-8-sig")
+        self.assertIn("Style: Subtitle,Arial,72,&H00EFAB12", ass)
+        self.assertIn(",2,60,60,180,1", ass)
+
+    def test_old_project_gets_top_subtitle_defaults(self):
+        project = pipeline.create_project("Mặc định phụ đề", [("1.png", png_bytes())], "Một cảnh")
+        for key in pipeline.SUBTITLE_DEFAULTS:
+            project["settings"].pop(key)
+        pipeline.save_project(project)
+        loaded = pipeline.load_project(project["id"])
+        self.assertEqual(loaded["settings"]["subtitle_position"], "top")
+        self.assertEqual(loaded["settings"]["subtitle_font"], "Microsoft JhengHei")
 
     def test_annotation_respects_duration_and_speed(self):
         project = pipeline.create_project("Nét vẽ", [("1.png", png_bytes())], "Một cảnh")

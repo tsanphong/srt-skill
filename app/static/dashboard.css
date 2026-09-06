@@ -9,6 +9,7 @@ body.dark{--ink:#e7eff0;--muted:#90a4aa;--paper:#0f202c;--cream:#0b1823;--line:#
 .subtitle-settings{display:grid;gap:12px;margin-top:18px;padding-top:18px;border-top:1px solid var(--line)}
 .subtitle-heading{display:flex;align-items:center;justify-content:space-between;gap:12px}
 .subtitle-heading>strong{font-size:13px}
+.subtitle-heading>div{display:grid}.subtitle-heading small{color:var(--muted);font-size:10px}
 .subtitle-heading .toggle{color:var(--muted);font-size:12px}
 .subtitle-options{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}
 .subtitle-options label{color:var(--muted);font-size:12px;font-weight:700}

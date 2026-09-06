@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Callable
 
 import av
+import numpy as np
 from PIL import Image
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -37,6 +38,7 @@ SUBTITLE_DEFAULTS = {
     "subtitle_color": "#FFFFFF",
     "subtitle_font": "Microsoft JhengHei",
     "subtitle_font_size": 54,
+    "subtitle_max_chars": 16,
 }
 
 
@@ -136,6 +138,10 @@ def _normalize_subtitle_settings(settings: dict) -> dict:
         settings["subtitle_font_size"] = round(max(20, min(120, float(settings["subtitle_font_size"]))))
     except (TypeError, ValueError):
         settings["subtitle_font_size"] = SUBTITLE_DEFAULTS["subtitle_font_size"]
+    try:
+        settings["subtitle_max_chars"] = round(max(8, min(40, float(settings["subtitle_max_chars"]))))
+    except (TypeError, ValueError):
+        settings["subtitle_max_chars"] = SUBTITLE_DEFAULTS["subtitle_max_chars"]
     return settings
 
 
@@ -330,7 +336,7 @@ def update_project(project_id: str, payload: dict) -> dict:
     settings = payload.get("settings", {})
     allowed = {"aspect", "fps", "resolution", "ink_color", "ink_path", "color_fill",
                "voice_volume", "music_volume", "subtitles", "channel_name",
-               "subtitle_position", "subtitle_color", "subtitle_font", "subtitle_font_size",
+               "subtitle_position", "subtitle_color", "subtitle_font", "subtitle_font_size", "subtitle_max_chars",
                "timing_mode", "manual_scene_duration"}
     old_settings = dict(project["settings"])
     for key in allowed:
@@ -507,6 +513,163 @@ def _ass_color(value: str) -> str:
     return f"&H00{blue}{green}{red}"
 
 
+def _split_long_subtitle(value: str, max_chars: int) -> list[str]:
+    value = value.strip()
+    if len(value) <= max_chars:
+        return [value] if value else []
+    if " " not in value:
+        return [value[i:i + max_chars] for i in range(0, len(value), max_chars)]
+    words = value.split()
+    lines: list[str] = []
+    current = ""
+    for word in words:
+        candidate = f"{current} {word}".strip()
+        if current and len(candidate) > max_chars:
+            lines.append(current)
+            current = word
+        else:
+            current = candidate
+    if current:
+        lines.append(current)
+    return lines
+
+
+def _subtitle_chunks(text: str, max_chars: int) -> list[str]:
+    text = re.sub(r"\s+", " ", text).strip()
+    if not text:
+        return []
+    clauses = re.findall(r"[^，,。！？!?；;：:、]+[，,。！？!?；;：:、]?", text)
+    chunks: list[str] = []
+    current = ""
+    joiner = "" if re.search(r"[\u3400-\u9fff]", text) else " "
+    for clause in clauses:
+        for piece in _split_long_subtitle(clause.strip(), max_chars):
+            candidate = f"{current}{joiner}{piece}".strip()
+            if current and len(candidate) > max_chars:
+                chunks.append(current)
+                current = piece
+            else:
+                current = candidate
+    if current:
+        chunks.append(current)
+    for index in range(1, len(chunks)):
+        closing = re.match(r"^[」』”’]+", chunks[index])
+        if closing:
+            chunks[index - 1] += closing.group(0)
+            chunks[index] = chunks[index][len(closing.group(0)):].lstrip()
+    chunks = [chunk for chunk in chunks if chunk]
+    if len(chunks) > 1 and len(chunks[-1]) <= 3 and len(chunks[-2]) + len(chunks[-1]) <= max_chars + 2:
+        tail = chunks.pop()
+        chunks[-1] += tail
+    return chunks
+
+
+def _boolean_runs(mask: np.ndarray, value: bool) -> list[tuple[int, int]]:
+    selected = (mask == value).astype(np.int8)
+    edges = np.flatnonzero(np.diff(np.r_[0, selected, 0]))
+    return list(zip(edges[::2].tolist(), edges[1::2].tolist()))
+
+
+def _speech_intervals(path: Path, sample_rate: int = 16000) -> list[tuple[float, float]]:
+    """Return voiced ranges using a fast local energy detector; no cloud/API is used."""
+    try:
+        chunks: list[np.ndarray] = []
+        with av.open(str(path)) as container:
+            if not container.streams.audio:
+                return []
+            resampler = av.AudioResampler(format="s16", layout="mono", rate=sample_rate)
+            for frame in container.decode(audio=0):
+                converted = resampler.resample(frame)
+                converted = converted if isinstance(converted, list) else [converted]
+                chunks.extend(item.to_ndarray().reshape(-1).astype(np.float32) for item in converted)
+        if not chunks:
+            return []
+        samples = np.concatenate(chunks)
+        frame_samples = round(sample_rate * .02)
+        count = len(samples) // frame_samples
+        if count < 1:
+            return []
+        rms = np.sqrt(np.mean(samples[:count * frame_samples].reshape(count, frame_samples) ** 2, axis=1))
+        threshold = max(120.0, float(np.percentile(rms, 15)) * 2.2, float(np.percentile(rms, 90)) * .045)
+        active = rms >= threshold
+        for start, end in _boolean_runs(active, False):
+            if start > 0 and end < len(active) and end - start <= 3:
+                active[start:end] = True
+        for start, end in _boolean_runs(active, True):
+            if end - start < 3:
+                active[start:end] = False
+        return [(start * .02, end * .02) for start, end in _boolean_runs(active, True)]
+    except (av.error.FFmpegError, OSError, ValueError):
+        return []
+
+
+def _time_at_voice_fraction(intervals: list[tuple[float, float]], fraction: float) -> float:
+    total = sum(end - start for start, end in intervals)
+    target = max(0.0, min(1.0, fraction)) * total
+    for start, end in intervals:
+        duration = end - start
+        if target <= duration:
+            return start + target
+        target -= duration
+    return intervals[-1][1]
+
+
+def _subtitle_events(project: dict, width: int, height: int) -> list[tuple[float, float, str]]:
+    settings = project["settings"]
+    _normalize_subtitle_settings(settings)
+    scale = height / 1920
+    logical_width = width / scale
+    fit_chars = max(8, int((logical_width - 120) / max(20, settings["subtitle_font_size"])))
+    max_chars = min(settings["subtitle_max_chars"], fit_chars)
+    voice = _audio_file(project, "voice")
+    activity = _speech_intervals(voice) if voice else []
+    events: list[tuple[float, float, str]] = []
+    for scene in project["scenes"]:
+        chunks = _subtitle_chunks(scene.get("text", ""), max_chars)
+        if not chunks:
+            continue
+        scene_start, scene_end = float(scene["start"]), float(scene["end"])
+        source_start = float(scene.get("voice_start") if scene.get("voice_start") is not None else scene_start)
+        source_start += float(scene.get("voice_trim_start", 0))
+        source_end = float(scene.get("voice_end") if scene.get("voice_end") is not None else scene_end)
+        source_end -= float(scene.get("voice_trim_end", 0))
+        voiced = [(max(start, source_start), min(end, source_end)) for start, end in activity
+                  if min(end, source_end) - max(start, source_start) >= .02]
+        weights = [max(1, len(re.sub(r"[\s，,。！？!?；;：:、]", "", chunk))) for chunk in chunks]
+        weight_total = sum(weights)
+        fractions = [0.0]
+        for weight in weights:
+            fractions.append(fractions[-1] + weight / weight_total)
+        if voiced:
+            desired = [_time_at_voice_fraction(voiced, value) for value in fractions[1:-1]]
+            gaps = [(voiced[index][1], voiced[index + 1][0]) for index in range(len(voiced) - 1)
+                    if voiced[index + 1][0] - voiced[index][1] >= .10]
+            cuts: list[tuple[float, float]] = []
+            last_gap = -1
+            for target in desired:
+                candidates = [(index, gap) for index, gap in enumerate(gaps) if index > last_gap]
+                nearest = min(candidates, key=lambda item: abs(sum(item[1]) / 2 - target)) if candidates else None
+                if nearest and abs(sum(nearest[1]) / 2 - target) <= .70:
+                    last_gap, cut = nearest
+                    cuts.append(cut)
+                else:
+                    cuts.append((target, target))
+            source_starts = [voiced[0][0], *[cut[1] for cut in cuts]]
+            source_ends = [cut[0] for cut in cuts] + [voiced[-1][1]]
+            starts = [scene_start + value - source_start for value in source_starts]
+            ends = [scene_start + value - source_start for value in source_ends]
+        else:
+            boundaries = [scene_start + (scene_end - scene_start) * value for value in fractions]
+            starts, ends = boundaries[:-1], boundaries[1:]
+        starts[0] = max(scene_start, starts[0])
+        ends[-1] = min(scene_end, ends[-1])
+        for index, chunk in enumerate(chunks):
+            start, end = starts[index], ends[index]
+            if end - start >= .08:
+                events.append((start, end, chunk))
+    return events
+
+
 def make_ass(project: dict, width: int, height: int) -> Path | None:
     settings = project["settings"]
     _normalize_subtitle_settings(settings)
@@ -528,9 +691,8 @@ def make_ass(project: dict, width: int, height: int) -> Path | None:
         "[Events]", "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
     ]
     if settings.get("subtitles"):
-        for scene in project["scenes"]:
-            if scene.get("text", "").strip():
-                lines.append(f"Dialogue: 0,{_ass_time(scene['start'])},{_ass_time(scene['end'])},Subtitle,,0,0,0,,{_escape_ass(scene['text'])}")
+        for start, end, text in _subtitle_events(project, width, height):
+            lines.append(f"Dialogue: 0,{_ass_time(start)},{_ass_time(end)},Subtitle,,0,0,0,,{_escape_ass(text)}")
     channel = settings.get("channel_name", "").strip()
     if channel:
         lines.append(f"Dialogue: 1,0:00:00.00,{_ass_time(project['analysis']['total_duration'])},Channel,,0,0,0,,{_escape_ass(channel)}")

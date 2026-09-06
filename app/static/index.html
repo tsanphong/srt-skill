@@ -75,12 +75,13 @@
             <label>Tên kênh<input id="channelName" placeholder="Hiện nhỏ ở góc trên"></label>
           </div>
           <div class="subtitle-settings">
-            <div class="subtitle-heading"><strong>Phụ đề</strong><label class="toggle"><input id="subtitles" type="checkbox"><span></span> Ghi vào video</label></div>
+            <div class="subtitle-heading"><div><strong>Phụ đề</strong><small>Tự đổi cụm theo nhịp voice</small></div><label class="toggle"><input id="subtitles" type="checkbox"><span></span> Ghi vào video</label></div>
             <div class="subtitle-options">
               <label>Vị trí<select id="subtitlePosition"><option value="top">Phía trên</option><option value="bottom">Phía dưới</option></select></label>
               <label>Màu chữ<input id="subtitleColor" type="color" value="#ffffff"></label>
               <label>Phông chữ<select id="subtitleFont"><option>Microsoft JhengHei</option><option>Microsoft JhengHei UI</option><option>Microsoft YaHei</option><option>Segoe UI</option><option>Arial</option><option>Tahoma</option></select></label>
               <label>Cỡ chữ<input id="subtitleFontSize" type="number" min="20" max="120" step="1" value="54"></label>
+              <label title="Giảm số này nếu muốn ít chữ hơn trên màn hình">Ký tự mỗi cụm<input id="subtitleMaxChars" type="number" min="8" max="40" step="1" value="16"></label>
             </div>
           </div>
         </section>

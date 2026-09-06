@@ -67,6 +67,25 @@ class PipelineTests(unittest.TestCase):
         self.assertIn("Style: Subtitle,Arial,72,&H00EFAB12", ass)
         self.assertIn(",2,60,60,180,1", ass)
 
+    def test_subtitles_are_split_and_timed_to_voice_activity(self):
+        text = "一個孩子，不需要一位完美的媽媽。孩子真正需要的，是有人陪伴。"
+        project = pipeline.create_project("Khớp voice", [("1.png", png_bytes())], text, ("voice.wav", wav_bytes(6)), None)
+        project = pipeline.update_project(project["id"], {"settings": {"subtitle_max_chars": 10}})
+        with patch.object(pipeline, "_speech_intervals", return_value=[(.4, 2.0), (2.5, 5.4)]):
+            events = pipeline._subtitle_events(project, 1080, 1920)
+            ass = pipeline.make_ass(project, 1080, 1920).read_text(encoding="utf-8-sig")
+        self.assertGreater(len(events), 2)
+        self.assertTrue(all(len(text) <= 10 for _, _, text in events))
+        self.assertAlmostEqual(events[0][0], .4, places=2)
+        self.assertAlmostEqual(events[-1][1], 5.4, places=2)
+        self.assertEqual(ass.count("Dialogue: 0,"), len(events))
+
+    def test_short_closing_punctuation_is_kept_without_duplicate_text(self):
+        text = "請把這支影片傳給一位需要聽見這句話的媽媽： 「你已經做得夠好了。 」"
+        chunks = pipeline._subtitle_chunks(text, 16)
+        self.assertEqual("".join(chunks).replace(" ", ""), text.replace(" ", ""))
+        self.assertEqual(len(chunks), len(set(chunks)))
+
     def test_old_project_gets_top_subtitle_defaults(self):
         project = pipeline.create_project("Mặc định phụ đề", [("1.png", png_bytes())], "Một cảnh")
         for key in pipeline.SUBTITLE_DEFAULTS:

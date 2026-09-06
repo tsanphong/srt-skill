@@ -13,9 +13,9 @@ from PIL import Image
 from app import pipeline
 
 
-def png_bytes(width=80, height=120):
+def png_bytes(width=80, height=120, color="#F5EBD7"):
     buf = io.BytesIO()
-    Image.new("RGB", (width, height), "#F5EBD7").save(buf, format="PNG")
+    Image.new("RGB", (width, height), color).save(buf, format="PNG")
     return buf.getvalue()
 
 
@@ -55,6 +55,15 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(project["analysis"]["mode"], "voice")
         self.assertTrue((self.temp / project["id"] / "source" / "subtitles.srt").exists())
         self.assertEqual(project["settings"]["subtitle_position"], "top")
+
+    def test_create_project_keeps_selected_video_mode_and_transition(self):
+        project = pipeline.create_project(
+            "Ảnh tĩnh", [("1.png", png_bytes())], "Một cảnh", None, None,
+            "static", "slideleft", .7,
+        )
+        self.assertEqual(project["settings"]["render_mode"], "static")
+        self.assertEqual(project["settings"]["transition"], "slideleft")
+        self.assertEqual(project["settings"]["transition_duration"], .7)
 
     def test_subtitle_style_supports_position_color_font_and_size(self):
         project = pipeline.create_project("Phụ đề", [("1.png", png_bytes())], "Xin chào")
@@ -111,6 +120,61 @@ class PipelineTests(unittest.TestCase):
         project = pipeline.update_project(project["id"], {"settings": {"ink_color": "#ff0000"}})
         self.assertFalse(project["scenes"][0]["rendered"])
         self.assertIsNone(project["scenes"][0]["video"])
+
+    def test_switching_to_static_mode_invalidates_rendered_scenes(self):
+        project = pipeline.create_project("Đổi kiểu dựng", [("1.png", png_bytes())], "Một cảnh")
+        project["scenes"][0].update({"rendered": True, "video": "scene-001.mp4", "status": "done"})
+        pipeline.save_project(project)
+        project = pipeline.update_project(project["id"], {"settings": {"render_mode": "static"}})
+        self.assertFalse(project["scenes"][0]["rendered"])
+        self.assertIsNone(project["scenes"][0]["video"])
+
+    def test_transition_change_only_requires_remerge(self):
+        project = pipeline.create_project("Đổi chuyển cảnh", [("1.png", png_bytes())], "Một cảnh")
+        project["scenes"][0].update({"rendered": True, "video": "scene-001.mp4", "status": "done"})
+        project["final_video"] = "old.mp4"
+        pipeline.save_project(project)
+        project = pipeline.update_project(project["id"], {"settings": {"transition": "fadeblack"}})
+        self.assertTrue(project["scenes"][0]["rendered"])
+        self.assertIsNone(project["final_video"])
+
+    def test_visual_filter_uses_duration_preserving_xfade_offsets(self):
+        project = pipeline.create_project(
+            "Chuyển cảnh", [("1.png", png_bytes()), ("2.png", png_bytes())], "Một. Hai."
+        )
+        project = pipeline.update_project(project["id"], {"settings": {
+            "transition": "dissolve", "transition_duration": .55,
+        }, "scenes": [{"index": 1, "duration": 3}, {"index": 2, "duration": 4}]})
+        filters, label = pipeline._visual_filter(project, 1080, 1920, 30)
+        chain = ";".join(filters)
+        self.assertEqual(label, "[visual]")
+        self.assertIn("tpad=stop_mode=clone:stop_duration=0.550", chain)
+        self.assertIn("xfade=transition=fade:duration=0.550:offset=3.000", chain)
+
+    def test_static_scene_renderer_keeps_full_image_and_duration(self):
+        project = pipeline.create_project(
+            "Render tĩnh", [("1.png", png_bytes())], "Một cảnh", None, None, "static"
+        )
+        project = pipeline.update_project(project["id"], {"scenes": [{"index": 1, "duration": .8}]})
+        output = pipeline.render_scene(project["id"], 1)
+        self.assertTrue(output.exists())
+        self.assertAlmostEqual(pipeline.probe_duration(output), .8, delta=.08)
+
+    def test_static_scenes_merge_with_smooth_transition_at_voice_length(self):
+        project = pipeline.create_project(
+            "Ghép tĩnh", [("1.png", png_bytes(color="#CC5533")),
+                          ("2.png", png_bytes(color="#3355CC"))],
+            "Một. Hai.", None, None, "static", "dissolve", .3,
+        )
+        project = pipeline.update_project(project["id"], {
+            "settings": {"resolution": "720p", "subtitles": False},
+            "scenes": [{"index": 1, "duration": .8}, {"index": 2, "duration": .8}],
+        })
+        pipeline.render_scene(project["id"], 1)
+        pipeline.render_scene(project["id"], 2)
+        output = pipeline.merge_project(project["id"])
+        self.assertTrue(output.exists())
+        self.assertAlmostEqual(pipeline.probe_duration(output), 1.6, delta=.12)
 
     def test_manual_timing_mode_uses_requested_scene_duration(self):
         project = pipeline.create_project("Thủ công", [("1.png", png_bytes()), ("2.png", png_bytes())], "Một. Hai.", ("voice.wav", wav_bytes(9)), None)

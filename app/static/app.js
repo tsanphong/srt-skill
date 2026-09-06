@@ -13,7 +13,7 @@ async function refreshProjects(){
   $('#projectList').innerHTML=projects.length?projects.map(p=>`<div class="project-item ${state.project?.id===p.id?'active':''}" data-id="${p.id}"><i>✎</i><div><strong>${esc(p.name)}</strong><small>${p.scenes.length} cảnh · ${esc(p.settings.aspect)}</small></div></div>`).join(''):'<small>Chưa có dự án</small>';
   $$('.project-item').forEach(item=>item.onclick=()=>openProject(item.dataset.id));
 }
-function createScreen(){ state.project=null;history.replaceState(null,'',location.pathname);state.images=[];$('#imageCount').textContent='Chưa chọn ảnh';$('#createView').reset();show('createView');refreshProjects(); }
+function createScreen(){ state.project=null;history.replaceState(null,'',location.pathname);state.images=[];$('#imageCount').textContent='Chưa chọn ảnh';$('#createView').reset();syncCreateMode();show('createView');refreshProjects(); }
 
 function addImages(files){
   const allowed=[...files].filter(f=>f.type.startsWith('image/')||/\.(png|jpe?g|webp|bmp|tiff?)$/i.test(f.name));
@@ -27,6 +27,9 @@ async function createProject(event){
   const form=new FormData();
   form.append('name',$('#projectName').value);
   form.append('script',$('#scriptInput').value);
+  form.append('render_mode',$('input[name="createRenderMode"]:checked').value);
+  form.append('transition',$('#createTransition').value);
+  form.append('transition_duration',$('#createTransitionDuration').value);
   state.images.forEach(file=>form.append('images',file,file.webkitRelativePath||file.name));
   const sf=$('#scriptFile').files[0],vf=$('#voiceInput').files[0],mf=$('#musicInput').files[0];
   if(sf)form.append('script_file',sf); if(vf)form.append('voice',vf); if(mf)form.append('music',mf);
@@ -44,13 +47,14 @@ function renderStudio(){
   const p=state.project,s=p.settings,a=p.analysis||{};
   $('#studioTitle').textContent=p.name;
   $('#studioMeta').textContent=`${p.scenes.length} cảnh · cập nhật ${p.updated_at.replace('T',' ')}`;
+  $('#renderMode').value=s.render_mode||'whiteboard';$('#transition').value=s.transition||'dissolve';$('#transitionDuration').value=s.transition_duration??0.55;
   $('#aspect').value=s.aspect;$('#resolution').value=s.resolution;$('#fps').value=s.fps;$('#inkColor').value=s.ink_color;
   $('#inkPath').value=s.ink_path;$('#colorFill').value=s.color_fill;$('#voiceVolume').value=s.voice_volume;$('#musicVolume').value=s.music_volume;
   $('#channelName').value=s.channel_name;$('#subtitles').checked=s.subtitles;$('#studioScript').value=p.script;
   $('#subtitlePosition').value=s.subtitle_position||'top';$('#subtitleColor').value=s.subtitle_color||'#FFFFFF';
   $('#subtitleFont').value=s.subtitle_font||'Microsoft JhengHei';$('#subtitleFontSize').value=s.subtitle_font_size||54;
   $('#subtitleMaxChars').value=s.subtitle_max_chars||16;
-  $('#timingMode').value=s.timing_mode||'voice';$('#manualDuration').value=s.manual_scene_duration||6;syncTimingMode();
+  $('#timingMode').value=s.timing_mode||'voice';$('#manualDuration').value=s.manual_scene_duration||6;syncTimingMode();syncRenderMode();
   const voice=p.audio.voice||'Chưa chọn',music=p.audio.music||'Chưa chọn';
   $('#assetSummary').innerHTML=`<div class="asset-row"><span>▧ ${p.scenes.length} ảnh đã sắp xếp</span><b>✓ SẴN SÀNG</b></div><div class="asset-row"><span title="${esc(voice)}">♬ Voice: ${esc(voice)}</span><button type="button" class="asset-button" data-audio="voice">${p.audio.voice?'Thay file':'Chọn voice'}</button></div><div class="asset-row"><span title="${esc(music)}">♫ Nhạc: ${esc(music)}</span><button type="button" class="asset-button" data-audio="music">${p.audio.music?'Thay file':'Chọn nhạc'}</button></div><div class="asset-row"><span>ID: ${esc(p.id)}</span><b>LOCAL</b></div>`;
   $$('.asset-button').forEach(button=>button.onclick=()=>$('#studio'+(button.dataset.audio==='voice'?'Voice':'Music')+'Input').click());
@@ -59,6 +63,7 @@ function renderStudio(){
   const completed=p.scenes.filter(scene=>scene.rendered).length;
   $('#sceneSummary').textContent=`${p.scenes.length} cảnh · ${completed} đã dựng · ${p.scenes.length-completed} chờ dựng · tự sắp xếp theo số.`;
   $('#sceneGrid').innerHTML=p.scenes.map(scene=>sceneCard(scene,p)).join('');
+  syncRenderMode();
   $$('.render-scene').forEach(button=>button.onclick=()=>startScene(Number(button.dataset.index)));
   $$('.preview-voice').forEach(button=>button.onclick=()=>previewSceneVoice(Number(button.dataset.index)).catch(error=>toast(error.message||'Không phát được voice.',true)));
   $$('.cut-voice-here').forEach(button=>button.onclick=()=>cutVoiceAtCurrentPosition(Number(button.dataset.index)));
@@ -78,7 +83,7 @@ function sceneCard(scene,project){
   return `<article class="scene-card" data-index="${scene.index}">
     <div class="scene-media" id="media-${scene.index}">${scene.rendered?`<video controls preload="metadata" poster="/api/projects/${id}/images/${scene.index}" src="/api/projects/${id}/scenes/${scene.index}/video?v=${videoVersion}"></video>`:`<img loading="lazy" src="/api/projects/${id}/images/${scene.index}" alt="Cảnh ${scene.index}">`}<span class="scene-no">CẢNH ${String(scene.index).padStart(2,'0')}</span><span class="scene-status ${scene.rendered?'done':'waiting'}">${scene.rendered?'✓ ĐÃ DỰNG':'⌛ CHỜ DỰNG'}</span><div class="scene-progress hidden"><strong>Đang chờ dựng…</strong><div class="scene-progress-track"><i></i></div><span>0%</span></div></div>
     <div class="scene-body"><div class="scene-name"><strong>${esc(scene.image)}</strong><small title="${esc(scene.source_name)}">${esc(scene.source_name)}</small></div>
-      <div class="scene-controls"><label>Thời lượng (giây)<input class="scene-duration" type="number" min=".8" max="600" step=".1" value="${scene.duration}"></label><label>Tốc độ vẽ<select class="scene-speed">${[.5,.75,1,1.25,1.5,2,3].map(x=>`<option value="${x}" ${x===scene.speed?'selected':''}>${x}×</option>`).join('')}</select></label></div>
+      <div class="scene-controls"><label>Thời lượng (giây)<input class="scene-duration" type="number" min=".8" max="600" step=".1" value="${scene.duration}"></label><label class="drawing-only">Tốc độ vẽ<select class="scene-speed">${[.5,.75,1,1.25,1.5,2,3].map(x=>`<option value="${x}" ${x===scene.speed?'selected':''}>${x}×</option>`).join('')}</select></label></div>
       <textarea class="scene-text" rows="3" placeholder="Phụ đề cho cảnh">${esc(scene.text)}</textarea>${voiceEditor}
       <div class="scene-actions"><button class="secondary render-scene" data-index="${scene.index}">${scene.rendered?'↻ Dựng lại cảnh':'▶ Dựng cảnh'}</button></div>
     </div></article>`;
@@ -86,6 +91,17 @@ function sceneCard(scene,project){
 
 function showVolume(){ $('#voiceOut').textContent=`${Math.round($('#voiceVolume').value*100)}%`;$('#musicOut').textContent=`${Math.round($('#musicVolume').value*100)}%`; }
 function syncTimingMode(){const manual=$('#timingMode').value==='manual';$('#manualDuration').disabled=!manual;$('#manualDuration').parentElement.classList.toggle('disabled',!manual)}
+function syncCreateMode(){
+  const mode=$('input[name="createRenderMode"]:checked')?.value||'whiteboard',none=$('#createTransition').value==='none';
+  $('#createTransitionDuration').disabled=none;$('#createTransitionDuration').parentElement.classList.toggle('disabled',none);
+  $('#createModeHint').textContent=mode==='static'?'Ảnh được giữ nguyên màu sắc và chi tiết; chỉ chuyển cảnh giữa các ảnh.':'Mỗi ảnh sẽ được dựng với hiệu ứng bàn tay vẽ và tô màu.';
+}
+function syncRenderMode(){
+  const staticMode=$('#renderMode').value==='static',none=$('#transition').value==='none';
+  $$('.drawing-only').forEach(label=>{label.classList.toggle('disabled',staticMode);const control=$('input,select',label);if(control)control.disabled=staticMode});
+  $('#transitionDuration').disabled=none;$('#transitionDuration').parentElement.classList.toggle('disabled',none);
+  $('#renderModeHint').textContent=staticMode?'Chế độ ảnh tĩnh giữ nguyên ảnh gốc. Hãy dựng lại các cảnh nếu vừa chuyển từ chế độ vẽ tay.':'Chế độ vẽ tay tạo nét và tô màu dần theo từng cảnh.';
+}
 function voiceBounds(index){
   const scene=state.project.scenes.find(item=>item.index===index),card=$(`.scene-card[data-index="${index}"]`);if(!scene||!card||scene.voice_start==null)return null;
   const sourceStart=Number(scene.voice_start),sourceEnd=Number(scene.voice_end),base=Math.max(.5,sourceEnd-sourceStart);
@@ -108,7 +124,7 @@ function cutVoiceAtCurrentPosition(index){
 async function applyVoiceTrim(index){try{stopVoicePreview();await save(false);renderStudio();toast(`Đã cắt voice cảnh ${index}. Hãy dựng lại cảnh này.`)}catch(e){toast(e.message,true)}}
 $('#voicePreview').ontimeupdate=()=>{const player=$('#voicePreview');if(voicePreviewState.index!=null&&player.currentTime>=voicePreviewState.end)stopVoicePreview()};
 function payload(){
-  return {script:$('#studioScript').value,settings:{aspect:$('#aspect').value,resolution:$('#resolution').value,fps:Number($('#fps').value),ink_color:$('#inkColor').value,ink_path:$('#inkPath').value,color_fill:$('#colorFill').value,voice_volume:Number($('#voiceVolume').value),music_volume:Number($('#musicVolume').value),channel_name:$('#channelName').value,subtitles:$('#subtitles').checked,subtitle_position:$('#subtitlePosition').value,subtitle_color:$('#subtitleColor').value,subtitle_font:$('#subtitleFont').value,subtitle_font_size:Number($('#subtitleFontSize').value),subtitle_max_chars:Number($('#subtitleMaxChars').value),timing_mode:$('#timingMode').value,manual_scene_duration:Number($('#manualDuration').value)},scenes:$$('.scene-card').map(card=>({index:Number(card.dataset.index),duration:Number($('.scene-duration',card).value),speed:Number($('.scene-speed',card).value),text:$('.scene-text',card).value,voice_trim_start:Number($('.voice-trim-start',card)?.value||0),voice_trim_end:Number($('.voice-trim-end',card)?.value||0)}))};
+  return {script:$('#studioScript').value,settings:{render_mode:$('#renderMode').value,transition:$('#transition').value,transition_duration:Number($('#transitionDuration').value||0.55),aspect:$('#aspect').value,resolution:$('#resolution').value,fps:Number($('#fps').value),ink_color:$('#inkColor').value,ink_path:$('#inkPath').value,color_fill:$('#colorFill').value,voice_volume:Number($('#voiceVolume').value),music_volume:Number($('#musicVolume').value),channel_name:$('#channelName').value,subtitles:$('#subtitles').checked,subtitle_position:$('#subtitlePosition').value,subtitle_color:$('#subtitleColor').value,subtitle_font:$('#subtitleFont').value,subtitle_font_size:Number($('#subtitleFontSize').value),subtitle_max_chars:Number($('#subtitleMaxChars').value),timing_mode:$('#timingMode').value,manual_scene_duration:Number($('#manualDuration').value)},scenes:$$('.scene-card').map(card=>({index:Number(card.dataset.index),duration:Number($('.scene-duration',card).value),speed:Number($('.scene-speed',card)?.value||1),text:$('.scene-text',card).value,voice_trim_start:Number($('.voice-trim-start',card)?.value||0),voice_trim_end:Number($('.voice-trim-end',card)?.value||0)}))};
 }
 async function save(showToast=true){ if(!state.project)return;state.project=await api(`/api/projects/${state.project.id}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload())});if(showToast)toast('Đã lưu thay đổi.');return state.project; }
 async function reanalyze(){try{await save(false);state.project=await api(`/api/projects/${state.project.id}/analyze`,{method:'POST'});renderStudio();toast('Đã căn lại kịch bản theo voice.');}catch(e){toast(e.message,true)}}
@@ -157,7 +173,8 @@ $('#voiceInput').onchange=e=>$('#voiceName').textContent=e.target.files[0]?.name
 $('#studioVoiceInput').onchange=e=>{uploadProjectAudio('voice',e.target.files[0]);e.target.value=''};$('#studioMusicInput').onchange=e=>{uploadProjectAudio('music',e.target.files[0]);e.target.value=''};
 $('#scriptFile').onchange=async e=>{const file=e.target.files[0];if(file)$('#scriptInput').value=await file.text()};
 const zone=$('#imageZone');['dragenter','dragover'].forEach(name=>zone.addEventListener(name,e=>{e.preventDefault();zone.classList.add('drag')}));['dragleave','drop'].forEach(name=>zone.addEventListener(name,e=>{e.preventDefault();zone.classList.remove('drag')}));zone.addEventListener('drop',e=>addImages(e.dataTransfer.files));
-$('#voiceVolume').oninput=$('#musicVolume').oninput=showVolume;$('#timingMode').onchange=syncTimingMode;$('#saveProject').onclick=()=>save();$('#reanalyze').onclick=reanalyze;$('#renderAll').onclick=startAll;$('#mergeOnly').onclick=mergeOnly;$('#closeProgress').onclick=progressClose;
+$$('input[name="createRenderMode"]').forEach(input=>input.onchange=syncCreateMode);$('#createTransition').onchange=syncCreateMode;
+$('#voiceVolume').oninput=$('#musicVolume').oninput=showVolume;$('#timingMode').onchange=syncTimingMode;$('#renderMode').onchange=syncRenderMode;$('#transition').onchange=syncRenderMode;$('#saveProject').onclick=()=>save();$('#reanalyze').onclick=reanalyze;$('#renderAll').onclick=startAll;$('#mergeOnly').onclick=mergeOnly;$('#closeProgress').onclick=progressClose;
 function applyTheme(){const dark=document.body.classList.contains('dark');$('#themeToggle').textContent=dark?'☀ Giao diện sáng':'◐ Giao diện tối'}
 const savedTheme=localStorage.getItem('whiteboard-theme');if(savedTheme==='light')document.body.classList.remove('dark');applyTheme();$('#themeToggle').onclick=()=>{document.body.classList.toggle('dark');localStorage.setItem('whiteboard-theme',document.body.classList.contains('dark')?'dark':'light');applyTheme()};
 api('/api/health').then(()=>{$('#serverText').textContent='Server local đã kết nối'}).catch(()=>{$('#serverText').textContent='Mất kết nối server'});

@@ -1,6 +1,6 @@
 # SRT Whiteboard Studio — hướng dẫn ứng dụng local
 
-Ứng dụng biến một nhóm ảnh thành video bàn tay vẽ, sau đó ghép voice, nhạc nền, phụ đề và tên kênh thành MP4. Máy chủ chỉ lắng nghe tại `127.0.0.1`; hình ảnh, âm thanh, kịch bản và video nằm trong thư mục `workspace/` trên máy, không được gửi đến dịch vụ bên ngoài.
+Ứng dụng biến một nhóm ảnh thành video bàn tay vẽ hoặc video ảnh tĩnh, sau đó ghép voice, nhạc nền, phụ đề và tên kênh thành MP4. Máy chủ chỉ lắng nghe tại `127.0.0.1`; hình ảnh, âm thanh, kịch bản và video nằm trong thư mục `workspace/` trên máy, không được gửi đến dịch vụ bên ngoài.
 
 Ứng dụng dùng `assets/drawing-hand-clean.png`, một bàn tay cầm bút không có chữ hoặc logo trên thân bút.
 
@@ -16,21 +16,25 @@ Nếu trình duyệt không tự mở, nhập `http://127.0.0.1:7860` vào Edge 
 ## Quy trình dựng video
 
 1. Chọn **Dự án mới**, nhập tên.
-2. Chọn nhiều ảnh hoặc chọn cả thư mục. Ứng dụng sắp xếp tự nhiên theo số trong tên, ví dụ `1.png`, `2.png`, `10.png`.
-3. Dán kịch bản hoặc tải TXT; chọn voice MP3/WAV và nhạc nền nếu có.
-4. Bấm **Tạo và tự căn chỉnh**. Khi có voice và chọn **Tự khớp theo voice**, tổng thời gian cảnh được căn theo đúng độ dài voice; kịch bản được chia theo trọng lượng câu. Chọn **Thủ công theo cảnh** để đặt một thời lượng mặc định rồi chỉnh từng cảnh.
-5. Chọn tỷ lệ 9:16 hoặc 16:9, độ phân giải, FPS, màu nét, kiểu đường bút và cách tô màu. Điều chỉnh âm lượng voice/nhạc, tên kênh và phụ đề.
+2. Chọn kiểu dựng ngay tại bước 1:
+   - **Vẽ tay:** bàn tay vẽ nét rồi tô màu dần theo ảnh.
+   - **Ảnh tĩnh:** giữ nguyên toàn bộ màu sắc và chi tiết của ảnh gốc, không tạo nét vẽ.
+   Chọn thêm kiểu chuyển cảnh **Hòa tan**, **Mờ qua nền đen**, **Trượt sang trái** hoặc **Không chuyển cảnh** và đặt thời gian chuyển từ 0,15 đến 1,5 giây.
+3. Chọn nhiều ảnh hoặc chọn cả thư mục. Ứng dụng sắp xếp tự nhiên theo số trong tên, ví dụ `1.png`, `2.png`, `10.png`.
+4. Dán kịch bản hoặc tải TXT; chọn voice MP3/WAV và nhạc nền nếu có.
+5. Bấm **Tạo và tự căn chỉnh**. Khi có voice và chọn **Tự khớp theo voice**, tổng thời gian cảnh được căn theo đúng độ dài voice; kịch bản được chia theo trọng lượng câu. Chọn **Thủ công theo cảnh** để đặt một thời lượng mặc định rồi chỉnh từng cảnh.
+6. Chọn tỷ lệ 9:16 hoặc 16:9, độ phân giải và FPS. Có thể đổi lại kiểu dựng và chuyển cảnh tại đây. Màu nét, đường bút và cách tô chỉ bật khi dùng chế độ vẽ tay. Điều chỉnh âm lượng voice/nhạc, tên kênh và phụ đề.
    - Nếu chưa chọn voice hoặc nhạc lúc tạo dự án, dùng **Chọn voice/Chọn nhạc** trong bảng Nguồn và cấu hình. Hai nút này cũng cho phép thay file về sau.
    - Thay nhạc không ảnh hưởng các cảnh đã dựng; chỉ cần ghép lại MP4. Thay voice trong chế độ tự khớp sẽ tính lại thời lượng và các cảnh có thời lượng thay đổi cần được dựng lại.
-6. Với từng cảnh, sửa phụ đề, thời lượng và tốc độ vẽ. Tốc độ lớn hơn làm phần vẽ hoàn tất sớm hơn và giữ ảnh hoàn chỉnh lâu hơn trong cùng thời lượng cảnh.
+7. Với từng cảnh, sửa phụ đề và thời lượng. Ở chế độ vẽ tay có thêm tốc độ vẽ; tốc độ lớn hơn làm phần vẽ hoàn tất sớm hơn và giữ ảnh hoàn chỉnh lâu hơn trong cùng thời lượng cảnh.
    - Khi dự án có voice và đang dùng **Tự khớp theo voice**, mỗi thẻ cảnh có bảng **Voice phân cảnh**.
    - Bấm **Nghe đoạn voice** để nghe đúng phần âm thanh của cảnh. Có thể nhập số giây **Cắt đầu/Cắt cuối**.
    - Để bỏ câu thông báo AI ở cuối voice CapCut: tại cảnh cuối, nghe tới ngay trước câu thông báo, bấm **Cắt cuối tại đây**, rồi bấm **Áp dụng cắt voice**.
    - Sau khi áp dụng, thời lượng và phụ đề được dồn lại tự động; chỉ cảnh có thời lượng thay đổi cần dựng lại.
-7. Bấm **Dựng cảnh** để xem riêng. Thanh tiến trình nằm ngay giữa thẻ cảnh, nên bạn vẫn có thể xem, chỉnh sửa hoặc yêu cầu dựng các cảnh khác. Nếu cảnh lỗi, sửa thông số rồi bấm **Dựng lại cảnh**; các cảnh khác được giữ nguyên.
-8. Có thể chọn dựng nhiều cảnh. Ứng dụng xử lý tối đa 2 cảnh cùng lúc và tự xếp hàng các cảnh còn lại để không làm máy quá tải. Phần trăm được cập nhật theo số khung hình thực tế, gồm cả bước mã hóa H.264 cuối cảnh.
-9. Bấm **Dựng toàn bộ** để xử lý song song các cảnh chưa hoàn tất rồi tự ghép MP4.
-10. Nếu đã dựng riêng tất cả cảnh, dùng **Ghép các cảnh đã dựng**. Nút **Tải MP4** xuất hiện khi hoàn tất.
+8. Bấm **Dựng cảnh** để xem riêng. Thanh tiến trình nằm ngay giữa thẻ cảnh, nên bạn vẫn có thể xem, chỉnh sửa hoặc yêu cầu dựng các cảnh khác. Nếu cảnh lỗi, sửa thông số rồi bấm **Dựng lại cảnh**; các cảnh khác được giữ nguyên.
+9. Có thể chọn dựng nhiều cảnh. Ứng dụng xử lý tối đa 2 cảnh cùng lúc và tự xếp hàng các cảnh còn lại để không làm máy quá tải. Phần trăm được cập nhật theo số khung hình thực tế, gồm cả bước mã hóa H.264 cuối cảnh.
+10. Bấm **Dựng toàn bộ** để xử lý song song các cảnh chưa hoàn tất rồi tự ghép MP4.
+11. Nếu đã dựng riêng tất cả cảnh, dùng **Ghép các cảnh đã dựng**. Nút **Tải MP4** xuất hiện khi hoàn tất. Chuyển cảnh có bù phần thời gian chồng hình nên tổng video vẫn khớp voice và phụ đề.
 
 ## Cấu trúc dữ liệu
 

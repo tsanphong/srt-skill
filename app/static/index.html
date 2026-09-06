@@ -27,8 +27,8 @@
       <div id="welcome" class="welcome">
         <div class="hero-copy">
           <span class="pill">WHITEBOARD VIDEO WORKFLOW</span>
-          <h1>Biến hình ảnh và lời thoại thành video vẽ tay.</h1>
-          <p>Nhập kịch bản, thả ảnh theo lô, thêm voice và nhạc. Ứng dụng tự sắp xếp, căn thời lượng, dựng từng cảnh rồi ghép thành MP4.</p>
+          <h1>Biến hình ảnh và lời thoại thành video hoàn chỉnh.</h1>
+          <p>Chọn video vẽ tay hoặc ảnh tĩnh, thêm voice và nhạc. Ứng dụng tự sắp xếp, căn thời lượng, chuyển cảnh mượt rồi ghép thành MP4.</p>
           <button id="heroStart" class="primary">Bắt đầu dự án</button>
         </div>
         <div class="hero-art"><div class="paper"><span class="line l1"></span><span class="line l2"></span><span class="line l3"></span><span class="pencil">✎</span></div></div>
@@ -38,6 +38,17 @@
       <form id="createView" class="hidden panel create-panel">
         <div class="section-title"><div><span class="step">01</span><h2>Tạo dự án mới</h2><p>Chọn tài nguyên đầu vào. Mọi file được sao chép vào workspace riêng.</p></div></div>
         <label>Tên dự án<input id="projectName" required placeholder="Ví dụ: Video nuôi dạy con"></label>
+        <div class="create-mode-box">
+          <div class="mode-choice"><strong>Kiểu dựng video</strong><div class="mode-buttons">
+            <label><input type="radio" name="createRenderMode" value="whiteboard" checked><span><b>✎ Vẽ tay</b><small>Bàn tay vẽ và tô dần từng ảnh</small></span></label>
+            <label><input type="radio" name="createRenderMode" value="static"><span><b>▧ Ảnh tĩnh</b><small>Giữ nguyên ảnh, dựng thẳng thành video</small></span></label>
+          </div></div>
+          <div class="create-transition-grid">
+            <label>Chuyển cảnh<select id="createTransition"><option value="dissolve">Hòa tan mượt</option><option value="fadeblack">Mờ qua nền đen</option><option value="slideleft">Trượt sang trái</option><option value="none">Không chuyển cảnh</option></select></label>
+            <label>Thời gian chuyển (giây)<input id="createTransitionDuration" type="number" min="0.15" max="1.5" step="0.05" value="0.55"></label>
+          </div>
+          <small id="createModeHint" class="mode-hint">Mỗi ảnh sẽ được dựng với hiệu ứng bàn tay vẽ và tô màu.</small>
+        </div>
         <div class="upload-grid">
           <div class="upload-zone" id="imageZone"><span class="upload-icon">▧</span><strong>Ảnh cảnh</strong><small>PNG, JPG, WEBP · chọn nhiều ảnh</small><div><button type="button" id="pickImages" class="secondary">Chọn ảnh</button><button type="button" id="pickFolder" class="ghost">Chọn thư mục</button></div><em id="imageCount">Chưa chọn ảnh</em></div>
           <div class="upload-zone compact"><span class="upload-icon">♬</span><strong>Voice</strong><small>MP3, WAV, M4A, FLAC</small><button type="button" data-pick="voiceInput" class="secondary">Chọn voice</button><em id="voiceName">Không bắt buộc</em></div>
@@ -58,13 +69,17 @@
           <div class="section-title"><div><span class="step">02</span><h2>Nguồn và cấu hình</h2></div><button id="reanalyze" class="text-button">↻ Căn lại</button></div>
           <div id="assetSummary" class="asset-summary"></div>
           <div class="settings-grid">
+            <label>Kiểu dựng<select id="renderMode"><option value="whiteboard">Vẽ tay</option><option value="static">Ảnh tĩnh</option></select></label>
+            <label>Chuyển cảnh<select id="transition"><option value="dissolve">Hòa tan mượt</option><option value="fadeblack">Mờ qua nền đen</option><option value="slideleft">Trượt sang trái</option><option value="none">Không chuyển cảnh</option></select></label>
+            <label>Thời gian chuyển (giây)<input id="transitionDuration" type="number" min="0.15" max="1.5" step="0.05"></label>
             <label>Tỷ lệ<select id="aspect"><option>9:16</option><option>16:9</option></select></label>
             <label>Độ phân giải<select id="resolution"><option value="1080p">Full HD</option><option value="720p">HD xem thử</option></select></label>
             <label>FPS<select id="fps"><option>30</option><option>60</option></select></label>
-            <label>Màu nét<input id="inkColor" type="color"></label>
-            <label>Đường bút<select id="inkPath"><option value="grid">Lưới ổn định</option><option value="skeleton">Bám nét</option></select></label>
-            <label>Tô màu<select id="colorFill"><option value="contour-wipe">Quét đường viền</option><option value="brush">Tô theo bút</option></select></label>
+            <label class="drawing-only">Màu nét<input id="inkColor" type="color"></label>
+            <label class="drawing-only">Đường bút<select id="inkPath"><option value="grid">Lưới ổn định</option><option value="skeleton">Bám nét</option></select></label>
+            <label class="drawing-only">Tô màu<select id="colorFill"><option value="contour-wipe">Quét đường viền</option><option value="brush">Tô theo bút</option></select></label>
           </div>
+          <p id="renderModeHint" class="mode-hint"></p>
           <div class="timing-grid">
             <label>Mốc thời lượng<select id="timingMode"><option value="voice">Tự khớp theo voice</option><option value="manual">Thủ công theo cảnh</option></select></label>
             <label>Thời lượng mặc định (giây)<input id="manualDuration" type="number" min=".8" max="600" step=".1"></label>

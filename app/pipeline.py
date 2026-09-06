@@ -40,6 +40,11 @@ SUBTITLE_DEFAULTS = {
     "subtitle_font_size": 54,
     "subtitle_max_chars": 16,
 }
+VIDEO_DEFAULTS = {
+    "render_mode": "whiteboard",
+    "transition": "dissolve",
+    "transition_duration": 0.55,
+}
 
 
 def synchronized_state(fn):
@@ -145,10 +150,27 @@ def _normalize_subtitle_settings(settings: dict) -> dict:
     return settings
 
 
+def _normalize_video_settings(settings: dict) -> dict:
+    for key, value in VIDEO_DEFAULTS.items():
+        settings.setdefault(key, value)
+    if settings.get("render_mode") not in {"whiteboard", "static"}:
+        settings["render_mode"] = VIDEO_DEFAULTS["render_mode"]
+    if settings.get("transition") not in {"none", "dissolve", "fadeblack", "slideleft"}:
+        settings["transition"] = VIDEO_DEFAULTS["transition"]
+    try:
+        settings["transition_duration"] = round(
+            max(0.15, min(1.5, float(settings["transition_duration"]))), 2
+        )
+    except (TypeError, ValueError):
+        settings["transition_duration"] = VIDEO_DEFAULTS["transition_duration"]
+    return settings
+
+
 def load_project(project_id: str) -> dict:
     with PROJECT_STATE_LOCK:
         project = read_json(project_path(project_id) / "project.json")
         _normalize_subtitle_settings(project.setdefault("settings", {}))
+        _normalize_video_settings(project["settings"])
         if project.get("audio", {}).get("voice") and project.get("analysis", {}).get("mode") == "voice":
             voice_cursor = 0.0
             for scene in project.get("scenes", []):
@@ -197,7 +219,9 @@ def _unique_id(name: str) -> str:
 @synchronized_state
 def create_project(name: str, images: list[tuple[str, bytes]], script: str = "",
                    voice: tuple[str, bytes] | None = None,
-                   music: tuple[str, bytes] | None = None) -> dict:
+                   music: tuple[str, bytes] | None = None,
+                   render_mode: str = "whiteboard", transition: str = "dissolve",
+                   transition_duration: float = 0.55) -> dict:
     valid_images = [(n, b) for n, b in images if Path(n).suffix.lower() in IMAGE_EXTENSIONS and b]
     if not valid_images:
         raise ValueError("Cần ít nhất một ảnh hợp lệ")
@@ -231,10 +255,17 @@ def create_project(name: str, images: list[tuple[str, bytes]], script: str = "",
             "ink_path": "grid", "color_fill": "contour-wipe", "voice_volume": 1.0,
             "music_volume": 0.18, "subtitles": True, "channel_name": "",
             **SUBTITLE_DEFAULTS,
+            **VIDEO_DEFAULTS,
             "timing_mode": "voice", "manual_scene_duration": 6.0,
         },
         "analysis": {}, "final_video": None,
     }
+    project["settings"].update({
+        "render_mode": render_mode,
+        "transition": transition,
+        "transition_duration": transition_duration,
+    })
+    _normalize_video_settings(project["settings"])
     save_project(project)
     analyze_project(project_id)
     return load_project(project_id)
@@ -337,15 +368,16 @@ def update_project(project_id: str, payload: dict) -> dict:
     allowed = {"aspect", "fps", "resolution", "ink_color", "ink_path", "color_fill",
                "voice_volume", "music_volume", "subtitles", "channel_name",
                "subtitle_position", "subtitle_color", "subtitle_font", "subtitle_font_size", "subtitle_max_chars",
-               "timing_mode", "manual_scene_duration"}
+               "timing_mode", "manual_scene_duration", "render_mode", "transition", "transition_duration"}
     old_settings = dict(project["settings"])
     for key in allowed:
         if key in settings:
             project["settings"][key] = settings[key]
     _normalize_subtitle_settings(project["settings"])
+    _normalize_video_settings(project["settings"])
     project_changed = project_changed or old_settings != project["settings"]
     render_settings_changed = any(old_settings.get(key) != project["settings"].get(key)
-                                  for key in ("fps", "ink_color", "ink_path", "color_fill"))
+                                  for key in ("fps", "ink_color", "ink_path", "color_fill", "render_mode"))
     scene_updates = {int(x["index"]): x for x in payload.get("scenes", []) if "index" in x}
     voice_linked = project["settings"].get("timing_mode", "voice") == "voice" and project.get("audio", {}).get("voice")
     cursor = 0.0
@@ -432,7 +464,7 @@ def _scene_signature(project: dict, scene: dict) -> tuple:
     return (
         scene.get("text"), float(scene.get("duration", 0)), float(scene.get("speed", 1)),
         settings.get("fps"), settings.get("ink_color"), settings.get("ink_path"),
-        settings.get("color_fill"),
+        settings.get("color_fill"), settings.get("render_mode"),
     )
 
 
@@ -449,6 +481,31 @@ def render_scene(project_id: str, scene_index: int, progress: Callable[[float, s
             ACTIVE_SCENES.discard(active_key)
 
 
+def _render_static_scene(image: Path, output: Path, duration: float, fps: int,
+                         log_path: Path, progress: Callable[[float, str], None] | None,
+                         scene_index: int) -> None:
+    """Turn one source image into a duration-accurate video clip without draw animation."""
+    command = [
+        ffmpeg_exe(), "-hide_banner", "-y", "-loop", "1", "-framerate", str(fps),
+        "-i", str(image), "-t", f"{duration:.3f}",
+        "-vf", (
+            "scale=1080:1080:force_original_aspect_ratio=decrease:"
+            "force_divisible_by=2:flags=lanczos,setsar=1,format=yuv420p"
+        ),
+        "-c:v", "libx264", "-preset", "fast", "-tune", "stillimage", "-crf", "18",
+        "-pix_fmt", "yuv420p", "-an", str(output),
+    ]
+    if progress:
+        progress(8, f"Đang tạo cảnh ảnh tĩnh {scene_index}")
+    proc = subprocess.run(command, cwd=ROOT, capture_output=True, text=True,
+                          encoding="utf-8", errors="replace")
+    log_path.write_text(proc.stdout + proc.stderr, encoding="utf-8")
+    if proc.returncode:
+        raise RuntimeError(f"Dựng cảnh {scene_index} thất bại. Xem {log_path.name}")
+    if progress:
+        progress(96, f"Đã tạo cảnh ảnh tĩnh {scene_index}")
+
+
 def _render_scene(project_id: str, scene_index: int, progress: Callable[[float, str], None] | None = None) -> Path:
     project = load_project(project_id)
     scene = next((x for x in project["scenes"] if x["index"] == scene_index), None)
@@ -456,34 +513,38 @@ def _render_scene(project_id: str, scene_index: int, progress: Callable[[float, 
         raise ValueError("Không tìm thấy cảnh")
     signature = _scene_signature(project, scene)
     root = project_path(project_id)
-    annotation = _annotation(project, scene)
     image = root / "source" / "images" / scene["image"]
     output = root / "scenes" / f"scene-{scene_index:03d}.mp4"
     settings = project["settings"]
-    command = [sys.executable, "-X", "utf8", str(RENDERER), str(image), str(annotation), str(output), str(HAND),
-               "--total-ms", str(round(scene["duration"] * 1000)), "--fps", str(settings.get("fps", 30)),
-               "--cap-long-edge", "1080", "--ink-path", settings.get("ink_path", "grid"),
-               "--color-fill", settings.get("color_fill", "contour-wipe"), "--ink-color", settings.get("ink_color", "#222831")]
     log_path = root / "logs" / f"scene-{scene_index:03d}.log"
     if progress:
         progress(1, f"Cảnh {scene_index} đang chờ lượt")
-    output_lines: list[str] = []
     with RENDER_SLOTS:
         if progress:
             progress(3, f"Đang chuẩn bị cảnh {scene_index}")
-        proc = subprocess.Popen(command, cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                text=True, encoding="utf-8", errors="replace", bufsize=1)
-        assert proc.stdout is not None
-        for line in proc.stdout:
-            output_lines.append(line)
-            match = re.search(r"PROGRESS=(\d+(?:\.\d+)?)", line)
-            if match and progress:
-                value = max(3.0, min(99.0, float(match.group(1))))
-                progress(value, f"Đang dựng cảnh {scene_index} · {round(value)}%")
-        proc.wait()
-    log_path.write_text("".join(output_lines), encoding="utf-8")
-    if proc.returncode:
-        raise RuntimeError(f"Dựng cảnh {scene_index} thất bại. Xem {log_path.name}")
+        if settings.get("render_mode") == "static":
+            _render_static_scene(image, output, float(scene["duration"]), int(settings.get("fps", 30)),
+                                 log_path, progress, scene_index)
+        else:
+            annotation = _annotation(project, scene)
+            command = [sys.executable, "-X", "utf8", str(RENDERER), str(image), str(annotation), str(output), str(HAND),
+                       "--total-ms", str(round(scene["duration"] * 1000)), "--fps", str(settings.get("fps", 30)),
+                       "--cap-long-edge", "1080", "--ink-path", settings.get("ink_path", "grid"),
+                       "--color-fill", settings.get("color_fill", "contour-wipe"), "--ink-color", settings.get("ink_color", "#222831")]
+            output_lines: list[str] = []
+            proc = subprocess.Popen(command, cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                    text=True, encoding="utf-8", errors="replace", bufsize=1)
+            assert proc.stdout is not None
+            for line in proc.stdout:
+                output_lines.append(line)
+                match = re.search(r"PROGRESS=(\d+(?:\.\d+)?)", line)
+                if match and progress:
+                    value = max(3.0, min(99.0, float(match.group(1))))
+                    progress(value, f"Đang dựng cảnh {scene_index} · {round(value)}%")
+            proc.wait()
+            log_path.write_text("".join(output_lines), encoding="utf-8")
+            if proc.returncode:
+                raise RuntimeError(f"Dựng cảnh {scene_index} thất bại. Xem {log_path.name}")
     with PROJECT_STATE_LOCK:
         project = load_project(project_id)
         scene = next(x for x in project["scenes"] if x["index"] == scene_index)
@@ -708,6 +769,49 @@ def _output_size(settings: dict) -> tuple[int, int]:
     return (1080, 1920) if hd else (720, 1280)
 
 
+def _visual_filter(project: dict, width: int, height: int, fps: int) -> tuple[list[str], str]:
+    """Build a duration-preserving scene chain with an optional smooth transition."""
+    scenes = project["scenes"]
+    filters: list[str] = []
+    for index, scene in enumerate(scenes):
+        duration = max(.1, float(scene["duration"]))
+        filters.append(
+            f"[{index}:v]scale={width}:{height}:force_original_aspect_ratio=decrease:flags=lanczos,"
+            f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=#F6F1E3,setsar=1,"
+            f"fps={fps},settb=1/{fps},trim=duration={duration:.3f},setpts=PTS-STARTPTS,format=yuv420p[base{index}]"
+        )
+    if len(scenes) == 1:
+        filters.append("[base0]null[visual]")
+        return filters, "[visual]"
+
+    transition = project["settings"].get("transition", "dissolve")
+    if transition == "none":
+        filters.append("".join(f"[base{i}]" for i in range(len(scenes))) +
+                       f"concat=n={len(scenes)}:v=1:a=0[visual]")
+        return filters, "[visual]"
+
+    requested = float(project["settings"].get("transition_duration", .55))
+    shortest = min(float(scene["duration"]) for scene in scenes)
+    duration = max(.1, min(requested, shortest * .45))
+    effect = {"dissolve": "fade", "fadeblack": "fadeblack", "slideleft": "slideleft"}.get(transition, "fade")
+    for index in range(len(scenes)):
+        if index < len(scenes) - 1:
+            filters.append(f"[base{index}]tpad=stop_mode=clone:stop_duration={duration:.3f},fps={fps}[v{index}]")
+        else:
+            filters.append(f"[base{index}]fps={fps}[v{index}]")
+    previous = "v0"
+    offset = float(scenes[0]["duration"])
+    for index in range(1, len(scenes)):
+        output = "visual" if index == len(scenes) - 1 else f"mix{index}"
+        filters.append(
+            f"[{previous}][v{index}]xfade=transition={effect}:duration={duration:.3f}:"
+            f"offset={offset:.3f}[{output}]"
+        )
+        previous = output
+        offset += float(scenes[index]["duration"])
+    return filters, "[visual]"
+
+
 def merge_project(project_id: str, progress: Callable[[float, str], None] | None = None) -> Path:
     project = load_project(project_id)
     root = project_path(project_id)
@@ -721,19 +825,18 @@ def merge_project(project_id: str, progress: Callable[[float, str], None] | None
     ffmpeg = ffmpeg_exe()
     visual = root / "outputs" / "visual.mp4"
     args = []
-    filters = []
-    for i, video in enumerate(videos):
+    for video in videos:
         args += ["-i", str(video)]
-        filters.append(f"[{i}:v]scale={width}:{height}:force_original_aspect_ratio=decrease:flags=lanczos,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=#F6F1E3,setsar=1,settb=AVTB,fps={fps},format=yuv420p[v{i}]")
-    filters.append("".join(f"[v{i}]" for i in range(len(videos))) + f"concat=n={len(videos)}:v=1:a=0[visual]")
-    command = [ffmpeg, "-hide_banner", "-y", *args, "-filter_complex", ";".join(filters), "-map", "[visual]",
+    filters, visual_label = _visual_filter(project, width, height, fps)
+    command = [ffmpeg, "-hide_banner", "-y", *args, "-filter_complex", ";".join(filters), "-map", visual_label,
                "-c:v", "libx264", "-preset", "fast", "-crf", "18", "-pix_fmt", "yuv420p", "-an", str(visual)]
     if progress:
         progress(10, "Đang chuẩn hóa và ghép hình")
     proc = subprocess.run(command, cwd=root, capture_output=True, text=True, encoding="utf-8", errors="replace")
     (root / "logs" / "merge-visual.log").write_text(proc.stderr, encoding="utf-8")
     if proc.returncode:
-        raise RuntimeError("Ghép hình thất bại")
+        detail = " | ".join(proc.stderr.strip().splitlines()[-12:]) if proc.stderr.strip() else "FFmpeg không trả về chi tiết"
+        raise RuntimeError(f"Ghép hình thất bại: {detail}")
 
     project = load_project(project_id)
     total = float(project["analysis"]["total_duration"])

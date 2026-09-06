@@ -47,7 +47,12 @@ def projects_create():
     voice = (voice_file.filename, voice_file.read()) if voice_file and voice_file.filename else None
     music = (music_file.filename, music_file.read()) if music_file and music_file.filename else None
     try:
-        project = create_project(request.form.get("name", "Dự án mới"), images, script, voice, music)
+        project = create_project(
+            request.form.get("name", "Dự án mới"), images, script, voice, music,
+            request.form.get("render_mode", "whiteboard"),
+            request.form.get("transition", "dissolve"),
+            request.form.get("transition_duration", 0.55),
+        )
         return jsonify(project), 201
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400

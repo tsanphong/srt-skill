@@ -138,7 +138,7 @@ class PipelineTests(unittest.TestCase):
         self.assertTrue(project["scenes"][0]["rendered"])
         self.assertIsNone(project["final_video"])
 
-    def test_visual_filter_uses_duration_preserving_xfade_offsets(self):
+    def test_visual_filter_builds_independent_transition_segments(self):
         project = pipeline.create_project(
             "Chuyển cảnh", [("1.png", png_bytes()), ("2.png", png_bytes())], "Một. Hai."
         )
@@ -148,8 +148,9 @@ class PipelineTests(unittest.TestCase):
         filters, label = pipeline._visual_filter(project, 1080, 1920, 30)
         chain = ";".join(filters)
         self.assertEqual(label, "[visual]")
-        self.assertIn("tpad=stop_mode=clone:stop_duration=0.550", chain)
-        self.assertIn("xfade=transition=fade:duration=0.550:offset=3.000", chain)
+        self.assertIn("trim=duration=3.000", chain)
+        self.assertIn("xfade=transition=fade:duration=0.550:offset=0[transition1]", chain)
+        self.assertIn("[body0][transition1][body1]concat=n=3:v=1:a=0[visual]", chain)
 
     def test_static_scene_renderer_keeps_full_image_and_duration(self):
         project = pipeline.create_project(
@@ -160,21 +161,25 @@ class PipelineTests(unittest.TestCase):
         self.assertTrue(output.exists())
         self.assertAlmostEqual(pipeline.probe_duration(output), .8, delta=.08)
 
-    def test_static_scenes_merge_with_smooth_transition_at_voice_length(self):
+    def test_multiple_static_scenes_merge_with_transition_at_voice_length(self):
         project = pipeline.create_project(
             "Ghép tĩnh", [("1.png", png_bytes(color="#CC5533")),
-                          ("2.png", png_bytes(color="#3355CC"))],
-            "Một. Hai.", None, None, "static", "dissolve", .3,
+                          ("2.png", png_bytes(color="#3355CC")),
+                          ("3.png", png_bytes(color="#55AA44"))],
+            "Một. Hai. Ba.", None, None, "static", "dissolve", .3,
         )
         project = pipeline.update_project(project["id"], {
             "settings": {"resolution": "720p", "subtitles": False},
-            "scenes": [{"index": 1, "duration": .8}, {"index": 2, "duration": .8}],
+            "scenes": [{"index": 1, "duration": .83}, {"index": 2, "duration": .87},
+                       {"index": 3, "duration": .79}],
         })
-        pipeline.render_scene(project["id"], 1)
-        pipeline.render_scene(project["id"], 2)
+        for index in range(1, 4):
+            pipeline.render_scene(project["id"], index)
         output = pipeline.merge_project(project["id"])
         self.assertTrue(output.exists())
-        self.assertAlmostEqual(pipeline.probe_duration(output), 1.6, delta=.12)
+        self.assertAlmostEqual(pipeline.probe_duration(output), 2.49, delta=.04)
+        with pipeline.av.open(str(output)) as container:
+            self.assertEqual(container.streams.video[0].frames, 75)
 
     def test_manual_timing_mode_uses_requested_scene_duration(self):
         project = pipeline.create_project("Thủ công", [("1.png", png_bytes()), ("2.png", png_bytes())], "Một. Hai.", ("voice.wav", wav_bytes(9)), None)

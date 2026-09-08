@@ -134,9 +134,10 @@ function progressOpen(title,message,value=0){$('#progressTitle').textContent=tit
 function progressClose(){$('#progressOverlay').classList.add('hidden');}
 function setSceneProgress(index,value,message='Đang dựng…'){
   const card=$(`.scene-card[data-index="${index}"]`);if(!card)return;
-  const panel=$('.scene-progress',card),percent=Math.max(0,Math.min(100,Number(value)||0));
-  panel.classList.remove('hidden');$('.scene-progress-track i',panel).style.width=percent+'%';$('span',panel).textContent=`${Math.round(percent)}%`;$('strong',panel).textContent=message;
-  card.classList.add('rendering');$$('button,input,select,textarea',card).forEach(control=>control.disabled=true);const button=$('.render-scene',card);if(button)button.textContent='✎ Đang dựng…'
+  const panel=$('.scene-progress',card),percent=Math.max(0,Math.min(100,Number(value)||0)),complete=percent>=100;
+  panel.classList.remove('hidden');$('.scene-progress-track i',panel).style.width=percent+'%';$('span',panel).textContent=`${Math.round(percent)}%`;$('strong',panel).textContent=complete?'Đã dựng xong · đang chờ ghép':message;
+  card.classList.toggle('rendering',!complete);$$('button,input,select,textarea',card).forEach(control=>control.disabled=!complete);const button=$('.render-scene',card);if(button)button.textContent=complete?'↻ Dựng lại cảnh':'✎ Đang dựng…';
+  if(complete){const status=$('.scene-status',card);status.className='scene-status done';status.textContent='✓ ĐÃ DỰNG';syncRenderMode()}
 }
 function restoreActiveProgress(){for(const context of state.jobs.values()){if(context.projectId!==state.project?.id)continue;for(const index of context.sceneIndexes||[])setSceneProgress(index,context.progress?.[index]||1,context.messages?.[index]||'Đang chờ dựng…')}}
 async function refreshCurrentProject(){if(!state.project)return;const id=state.project.id,project=await api(`/api/projects/${id}`);if(state.project?.id===id){state.project=project;renderStudio()}}
@@ -144,7 +145,7 @@ async function watch(jobId,context={}){
   context={projectId:state.project.id,sceneIndexes:[],progress:{},messages:{},global:false,...context};state.jobs.set(jobId,context);
   const tick=async()=>{try{
     const job=await api(`/api/jobs/${jobId}`),details=job.details||{},sceneProgress=details.scene_progress||{};
-    for(const [key,value] of Object.entries(sceneProgress)){const index=Number(key);context.progress[index]=value;context.messages[index]=`Đang dựng cảnh ${index}`;if(context.projectId===state.project?.id)setSceneProgress(index,value,context.messages[index])}
+    for(const [key,value] of Object.entries(sceneProgress)){const index=Number(key);context.progress[index]=value;context.messages[index]=Number(value)>=100?'Đã dựng xong · đang chờ ghép':`Đang dựng cảnh ${index}`;if(context.projectId===state.project?.id)setSceneProgress(index,value,context.messages[index])}
     if(context.global){$('#progressMessage').textContent=job.message;$('#progressBar').style.width=job.progress+'%';$('#progressValue').textContent=Math.round(job.progress)+'%'}
     if(job.state==='done'){
       state.jobs.delete(jobId);state.polls.delete(jobId);if(context.global)progressClose();await refreshCurrentProject();toast(context.sceneIndexes.length>1?'Đã dựng và ghép toàn bộ video.':'Tác vụ đã hoàn tất.');return;

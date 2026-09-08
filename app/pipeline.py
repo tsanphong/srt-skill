@@ -794,21 +794,49 @@ def _visual_filter(project: dict, width: int, height: int, fps: int) -> tuple[li
     shortest = min(float(scene["duration"]) for scene in scenes)
     duration = max(.1, min(requested, shortest * .45))
     effect = {"dissolve": "fade", "fadeblack": "fadeblack", "slideleft": "slideleft"}.get(transition, "fade")
-    for index in range(len(scenes)):
-        if index < len(scenes) - 1:
-            filters.append(f"[base{index}]tpad=stop_mode=clone:stop_duration={duration:.3f},fps={fps}[v{index}]")
+
+    # Build each boundary as its own short transition segment. Chaining many
+    # xfade filters with cumulative offsets causes FFmpeg to drop most frames
+    # on long projects. Independent segments keep every scene's intended
+    # duration; the final mux pads sub-frame rounding at the last frame.
+    for index, scene in enumerate(scenes):
+        raw_labels: list[str] = []
+        if index == 0:
+            raw_labels.append(f"body{index}")
         else:
-            filters.append(f"[base{index}]fps={fps}[v{index}]")
-    previous = "v0"
-    offset = float(scenes[0]["duration"])
-    for index in range(1, len(scenes)):
-        output = "visual" if index == len(scenes) - 1 else f"mix{index}"
+            raw_labels.extend((f"rawintro{index}", f"rawbody{index}"))
+        if index < len(scenes) - 1:
+            raw_labels.append(f"rawtail{index}")
         filters.append(
-            f"[{previous}][v{index}]xfade=transition={effect}:duration={duration:.3f}:"
-            f"offset={offset:.3f}[{output}]"
+            f"[base{index}]split={len(raw_labels)}" + "".join(f"[{label}]" for label in raw_labels)
         )
-        previous = output
-        offset += float(scenes[index]["duration"])
+        scene_duration = float(scene["duration"])
+        if index > 0:
+            filters.append(
+                f"[rawintro{index}]trim=duration={duration:.3f},setpts=PTS-STARTPTS,"
+                f"fps={fps},settb=1/{fps}[intro{index}]"
+            )
+            filters.append(
+                f"[rawbody{index}]trim=start={duration:.3f}:duration={scene_duration-duration:.3f},"
+                f"setpts=PTS-STARTPTS,fps={fps},settb=1/{fps}[body{index}]"
+            )
+        if index < len(scenes) - 1:
+            frame_duration = 1 / fps
+            tail_start = max(0, scene_duration - frame_duration)
+            filters.append(
+                f"[rawtail{index}]trim=start={tail_start:.6f}:duration={frame_duration:.6f},"
+                f"setpts=PTS-STARTPTS,tpad=stop_mode=clone:stop_duration={duration:.3f},"
+                f"trim=duration={duration:.3f},fps={fps},settb=1/{fps}[hold{index}]"
+            )
+
+    segments = ["[body0]"]
+    for index in range(1, len(scenes)):
+        filters.append(
+            f"[hold{index-1}][intro{index}]xfade=transition={effect}:"
+            f"duration={duration:.3f}:offset=0[transition{index}]"
+        )
+        segments.extend((f"[transition{index}]", f"[body{index}]"))
+    filters.append("".join(segments) + f"concat=n={len(segments)}:v=1:a=0[visual]")
     return filters, "[visual]"
 
 
@@ -892,7 +920,17 @@ def merge_project(project_id: str, progress: Callable[[float, str], None] | None
         fade_start = max(0, total - 2.5)
         audio_filters.append(f"[{next_index}:a]volume={float(project['settings'].get('music_volume',.18))},atrim=0:{total},afade=t=out:st={fade_start}:d={min(2.5,total)}[music]")
         audio_labels.append("[music]")
-    video_filter = "[0:v]" + ("ass=source/subtitles.ass" if ass else "null") + "[video]"
+    visual_duration = probe_duration(visual) or total
+    video_steps = [f"fps={fps}"]
+    if visual_duration < total:
+        # FFmpeg may discard the final boundary frame after trim/mux. Two
+        # guard frames keep video and audio within one frame at the target FPS.
+        padding = total - visual_duration + (2 / fps)
+        video_steps.append(f"tpad=stop_mode=clone:stop_duration={padding:.6f}")
+    video_steps.extend((f"trim=duration={total:.6f}", "setpts=PTS-STARTPTS"))
+    if ass:
+        video_steps.append("ass=source/subtitles.ass")
+    video_filter = "[0:v]" + ",".join(video_steps) + "[video]"
     complex_filters = [video_filter, *audio_filters]
     if len(audio_labels) > 1:
         complex_filters.append("".join(audio_labels) + f"amix=inputs={len(audio_labels)}:duration=longest:normalize=0,alimiter=limit=0.95,atrim=0:{total}[audio]")

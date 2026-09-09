@@ -11,6 +11,7 @@ from unittest.mock import patch
 from PIL import Image
 
 from app import pipeline
+from app.server import app
 
 
 def png_bytes(width=80, height=120, color="#F5EBD7"):
@@ -65,6 +66,60 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(project["settings"]["transition"], "slideleft")
         self.assertEqual(project["settings"]["transition_duration"], .7)
 
+    def test_create_project_stores_vietnamese_source_script(self):
+        text = "Mở đầu câu chuyện.\n\nĐây là phần kết."
+        project = pipeline.create_project(
+            "Kịch bản Việt", [("1.png", png_bytes()), ("2.png", png_bytes())],
+            "第一幕。第二幕。", source_script_vi=text,
+        )
+        source = self.temp / project["id"] / "source" / "source-script-vi.txt"
+        self.assertEqual(project["source_script_vi"], text)
+        self.assertEqual(source.read_text(encoding="utf-8-sig").strip(), text)
+        self.assertIsNone(project["vietnamese_subtitle"])
+
+    def test_vietnamese_script_can_be_uploaded_and_downloaded_through_api(self):
+        project = pipeline.create_project("API phụ đề", [("1.png", png_bytes())], "Một cảnh")
+        client = app.test_client()
+        response = client.post(
+            f"/api/projects/{project['id']}/script/vi",
+            data={"file": (io.BytesIO("Xin chào Việt Nam.".encode("utf-8")), "source-script-vi.txt")},
+            content_type="multipart/form-data",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["source_script_vi"], "Xin chào Việt Nam.")
+        project = pipeline.load_project(project["id"])
+        subtitle = pipeline.generate_vietnamese_subtitles(project)
+        project["vietnamese_subtitle"] = subtitle.name
+        pipeline.save_project(project)
+        response = client.get(f"/api/projects/{project['id']}/subtitles/vi/download")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Xin chào Việt Nam.", response.data.decode("utf-8-sig"))
+        response.close()
+
+    def test_vietnamese_srt_is_short_timed_and_two_lines_at_most(self):
+        text = ("Một người mạnh mẽ vẫn cần một nơi để dựa vào khi mệt mỏi.\n\n"
+                "Hãy lắng nghe và ở bên họ trong những ngày khó khăn nhất.")
+        project = pipeline.create_project(
+            "Phụ đề Việt", [("1.png", png_bytes()), ("2.png", png_bytes())],
+            "第一幕。第二幕。", ("voice.wav", wav_bytes(12)), None,
+            source_script_vi=text,
+        )
+        with patch.object(pipeline, "_speech_intervals", return_value=[(.4, 5.4), (6.3, 11.5)]):
+            path = pipeline.generate_vietnamese_subtitles(project)
+        content = path.read_text(encoding="utf-8-sig")
+        blocks = [block.splitlines() for block in content.strip().split("\n\n")]
+        self.assertGreaterEqual(len(blocks), 2)
+        self.assertTrue(all(len(block) <= 4 for block in blocks))
+        self.assertIn("00:00:00,400", blocks[0][1])
+        self.assertIn("00:00:11,500", blocks[-1][1])
+        flattened = " ".join(" ".join(block[2:]) for block in blocks)
+        self.assertEqual(" ".join(flattened.split()), " ".join(text.split()))
+        project["vietnamese_subtitle"] = path.name
+        pipeline.save_project(project)
+        project = pipeline.update_project(project["id"], {"script": "Kịch bản chính đã đổi."})
+        self.assertIsNone(project["vietnamese_subtitle"])
+        self.assertFalse(path.exists())
+
     def test_subtitle_style_supports_position_color_font_and_size(self):
         project = pipeline.create_project("Phụ đề", [("1.png", png_bytes())], "Xin chào")
         project["scenes"][0].update({"start": 0.0, "end": 6.0})
@@ -103,6 +158,8 @@ class PipelineTests(unittest.TestCase):
         loaded = pipeline.load_project(project["id"])
         self.assertEqual(loaded["settings"]["subtitle_position"], "top")
         self.assertEqual(loaded["settings"]["subtitle_font"], "Microsoft JhengHei")
+        self.assertEqual(loaded["source_script_vi"], "")
+        self.assertIsNone(loaded["vietnamese_subtitle"])
 
     def test_annotation_respects_duration_and_speed(self):
         project = pipeline.create_project("Nét vẽ", [("1.png", png_bytes())], "Một cảnh")
@@ -185,6 +242,7 @@ class PipelineTests(unittest.TestCase):
                           ("2.png", png_bytes(color="#3355CC")),
                           ("3.png", png_bytes(color="#55AA44"))],
             "Một. Hai. Ba.", None, None, "static", "dissolve", .3,
+            "Cảnh mở đầu.\n\nCảnh ở giữa.\n\nCảnh kết thúc.",
         )
         project = pipeline.update_project(project["id"], {
             "settings": {"resolution": "720p", "subtitles": False},
@@ -198,6 +256,10 @@ class PipelineTests(unittest.TestCase):
         self.assertAlmostEqual(pipeline.probe_duration(output), 2.49, delta=.04)
         with pipeline.av.open(str(output)) as container:
             self.assertEqual(container.streams.video[0].frames, 75)
+        project = pipeline.load_project(project["id"])
+        subtitle = self.temp / project["id"] / "outputs" / project["vietnamese_subtitle"]
+        self.assertTrue(subtitle.exists())
+        self.assertIn("Cảnh kết thúc.", subtitle.read_text(encoding="utf-8-sig"))
 
     def test_manual_timing_mode_uses_requested_scene_duration(self):
         project = pipeline.create_project("Thủ công", [("1.png", png_bytes()), ("2.png", png_bytes())], "Một. Hai.", ("voice.wav", wav_bytes(9)), None)

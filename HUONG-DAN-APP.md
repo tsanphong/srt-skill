@@ -21,7 +21,7 @@ Nếu trình duyệt không tự mở, nhập `http://127.0.0.1:7860` vào Edge 
    - **Ảnh tĩnh:** giữ nguyên toàn bộ màu sắc và chi tiết của ảnh gốc, không tạo nét vẽ.
    Chọn thêm kiểu chuyển cảnh **Hòa tan**, **Mờ qua nền đen**, **Trượt sang trái** hoặc **Không chuyển cảnh** và đặt thời gian chuyển từ 0,15 đến 1,5 giây.
 3. Chọn nhiều ảnh hoặc chọn cả thư mục. Ứng dụng sắp xếp tự nhiên theo số trong tên, ví dụ `1.png`, `2.png`, `10.png`.
-4. Dán kịch bản hoặc tải TXT; chọn voice MP3/WAV và nhạc nền nếu có.
+4. Dán kịch bản hoặc tải TXT; chọn voice MP3/WAV và nhạc nền nếu có. Nếu cần phụ đề tiếng Việt để tải lên YouTube, chọn thêm file `source-script-vi.txt` tại ô **Kịch bản tiếng Việt cho YouTube**.
 5. Bấm **Tạo và tự căn chỉnh**. Khi có voice và chọn **Tự khớp theo voice**, tổng thời gian cảnh được căn theo đúng độ dài voice; kịch bản được chia theo trọng lượng câu. Chọn **Thủ công theo cảnh** để đặt một thời lượng mặc định rồi chỉnh từng cảnh.
 6. Chọn tỷ lệ 9:16 hoặc 16:9, độ phân giải và FPS. Có thể đổi lại kiểu dựng và chuyển cảnh tại đây. Màu nét, đường bút và cách tô chỉ bật khi dùng chế độ vẽ tay. Điều chỉnh âm lượng voice/nhạc, tên kênh và phụ đề.
    - Nếu chưa chọn voice hoặc nhạc lúc tạo dự án, dùng **Chọn voice/Chọn nhạc** trong bảng Nguồn và cấu hình. Hai nút này cũng cho phép thay file về sau.
@@ -34,7 +34,9 @@ Nếu trình duyệt không tự mở, nhập `http://127.0.0.1:7860` vào Edge 
 8. Bấm **Dựng cảnh** để xem riêng. Thanh tiến trình nằm ngay giữa thẻ cảnh, nên bạn vẫn có thể xem, chỉnh sửa hoặc yêu cầu dựng các cảnh khác. Nếu cảnh lỗi, sửa thông số rồi bấm **Dựng lại cảnh**; các cảnh khác được giữ nguyên.
 9. Có thể chọn dựng nhiều cảnh. Ứng dụng xử lý tối đa 2 cảnh cùng lúc và tự xếp hàng các cảnh còn lại để không làm máy quá tải. Phần trăm được cập nhật theo số khung hình thực tế, gồm cả bước mã hóa H.264 cuối cảnh.
 10. Bấm **Dựng toàn bộ** để xử lý song song các cảnh chưa hoàn tất rồi tự ghép MP4.
-11. Nếu đã dựng riêng tất cả cảnh, dùng **Ghép các cảnh đã dựng**. Nút **Tải MP4** xuất hiện khi hoàn tất. Chuyển cảnh có bù phần thời gian chồng hình nên tổng video vẫn khớp voice và phụ đề.
+11. Nếu đã dựng riêng tất cả cảnh, dùng **Ghép các cảnh đã dựng**. Nút **Tải MP4** xuất hiện khi hoàn tất. Nếu dự án đã nhập `source-script-vi.txt`, ứng dụng đồng thời chia câu theo thứ tự cảnh, căn mốc theo voice và tạo nút **Tải SRT tiếng Việt** để tải phụ đề lên YouTube. Chuyển cảnh có bù phần thời gian chồng hình nên tổng video vẫn khớp voice và phụ đề.
+
+Bạn có thể bổ sung hoặc thay `source-script-vi.txt` sau khi tạo dự án tại bảng **Nguồn và cấu hình**. Sau khi thay file, bấm **Ghép các cảnh đã dựng** để tạo lại SRT theo timeline mới nhất. File SRT dùng UTF-8, mỗi mốc tối đa hai dòng ngắn và giữ đúng thứ tự của kịch bản nguồn.
 
 ## Cấu trúc dữ liệu
 
@@ -44,6 +46,7 @@ workspace/projects/<ma-du-an>/
 ├── source/
 │   ├── images/                  # ảnh đã đổi tên scene-001, scene-002...
 │   ├── audio/                   # voice và nhạc nền
+│   ├── source-script-vi.txt     # kịch bản tiếng Việt nhập để tạo SRT YouTube
 │   ├── subtitles.srt            # phụ đề rời được tạo tự động
 │   └── subtitles.ass            # phụ đề/tên kênh dùng khi ghi hình
 ├── scenes/
@@ -51,6 +54,7 @@ workspace/projects/<ma-du-an>/
 │   └── scene-001.mp4            # video từng cảnh
 ├── outputs/
 │   ├── visual.mp4               # hình đã chuẩn hóa tỷ lệ
+│   ├── <ma-du-an>-vi.srt         # phụ đề tiếng Việt tạo cùng lúc ghép video
 │   └── <ma-du-an>-final.mp4      # thành phẩm
 └── logs/                        # nhật ký giúp tìm cảnh lỗi
 ```

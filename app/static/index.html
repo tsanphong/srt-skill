@@ -59,6 +59,7 @@
         <input id="voiceInput" type="file" accept="audio/*" hidden>
         <input id="musicInput" type="file" accept="audio/*" hidden>
         <div class="script-box"><div class="label-row"><label for="scriptInput">Kịch bản</label><button type="button" data-pick="scriptFile" class="text-button">Tải file TXT</button></div><textarea id="scriptInput" rows="9" placeholder="Dán kịch bản vào đây. Mỗi đoạn hoặc câu sẽ được phân bổ theo thời lượng voice..."></textarea><input id="scriptFile" type="file" accept=".txt,text/plain" hidden></div>
+        <div class="script-box vi-script-box"><div class="label-row"><label for="scriptViFile">Kịch bản tiếng Việt cho YouTube</label><button type="button" data-pick="scriptViFile" class="text-button">Chọn source-script-vi.txt</button></div><small>Ứng dụng sẽ căn nội dung này theo từng cảnh và tạo file SRT khi ghép video.</small><em id="scriptViName">Không bắt buộc</em><input id="scriptViFile" type="file" accept=".txt,text/plain" hidden></div>
         <div class="form-actions"><button type="button" id="cancelCreate" class="ghost">Hủy</button><button class="primary" type="submit">Tạo và tự căn chỉnh →</button></div>
       </form>
 
@@ -105,7 +106,7 @@
 
         <section class="scenes-section"><div class="section-title"><div><span class="step">04</span><h2>Danh sách các cảnh</h2><p id="sceneSummary">Ảnh đã được sắp xếp tự nhiên theo số trong tên file.</p></div><button id="mergeOnly" class="secondary">Ghép các cảnh đã dựng</button></div><div id="sceneGrid" class="scene-grid"></div></section>
 
-        <section id="outputPanel" class="panel output-panel hidden"><div><span class="done-icon">✓</span><div><h2>Video đã sẵn sàng</h2><p>MP4 đã ghép, trộn âm thanh và phụ đề.</p></div></div><a id="downloadFinal" class="primary" href="#">Tải MP4</a></section>
+        <section id="outputPanel" class="panel output-panel hidden"><div><span class="done-icon">✓</span><div><h2>Tệp đầu ra đã sẵn sàng</h2><p id="outputDescription">MP4 đã ghép, trộn âm thanh và phụ đề.</p></div></div><div class="output-actions"><a id="downloadViSrt" class="secondary hidden" href="#">Tải SRT tiếng Việt</a><a id="downloadFinal" class="primary hidden" href="#">Tải MP4</a></div></section>
       </div>
     </section>
   </main>
@@ -113,6 +114,7 @@
   <div id="progressOverlay" class="overlay hidden"><div class="progress-card"><span class="spinner">✎</span><h2 id="progressTitle">Đang dựng video</h2><p id="progressMessage">Đang chuẩn bị...</p><div class="progress-track"><i id="progressBar"></i></div><strong id="progressValue">0%</strong><button id="closeProgress" class="secondary hidden">Đóng</button></div></div>
   <input id="studioVoiceInput" type="file" accept="audio/*" hidden>
   <input id="studioMusicInput" type="file" accept="audio/*" hidden>
+  <input id="studioScriptViInput" type="file" accept=".txt,text/plain" hidden>
   <audio id="voicePreview" preload="metadata" hidden></audio>
   <div id="toast" class="toast hidden"></div>
   <script src="/static/app.js"></script>

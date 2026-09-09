@@ -13,7 +13,7 @@ async function refreshProjects(){
   $('#projectList').innerHTML=projects.length?projects.map(p=>`<div class="project-item ${state.project?.id===p.id?'active':''}" data-id="${p.id}"><i>✎</i><div><strong>${esc(p.name)}</strong><small>${p.scenes.length} cảnh · ${esc(p.settings.aspect)}</small></div></div>`).join(''):'<small>Chưa có dự án</small>';
   $$('.project-item').forEach(item=>item.onclick=()=>openProject(item.dataset.id));
 }
-function createScreen(){ state.project=null;history.replaceState(null,'',location.pathname);state.images=[];$('#imageCount').textContent='Chưa chọn ảnh';$('#createView').reset();syncCreateMode();show('createView');refreshProjects(); }
+function createScreen(){ state.project=null;history.replaceState(null,'',location.pathname);state.images=[];$('#imageCount').textContent='Chưa chọn ảnh';$('#createView').reset();$('#scriptViName').textContent='Không bắt buộc';syncCreateMode();show('createView');refreshProjects(); }
 
 function addImages(files){
   const allowed=[...files].filter(f=>f.type.startsWith('image/')||/\.(png|jpe?g|webp|bmp|tiff?)$/i.test(f.name));
@@ -31,8 +31,8 @@ async function createProject(event){
   form.append('transition',$('#createTransition').value);
   form.append('transition_duration',$('#createTransitionDuration').value);
   state.images.forEach(file=>form.append('images',file,file.webkitRelativePath||file.name));
-  const sf=$('#scriptFile').files[0],vf=$('#voiceInput').files[0],mf=$('#musicInput').files[0];
-  if(sf)form.append('script_file',sf); if(vf)form.append('voice',vf); if(mf)form.append('music',mf);
+  const sf=$('#scriptFile').files[0],svf=$('#scriptViFile').files[0],vf=$('#voiceInput').files[0],mf=$('#musicInput').files[0];
+  if(sf)form.append('script_file',sf); if(svf)form.append('script_vi_file',svf); if(vf)form.append('voice',vf); if(mf)form.append('music',mf);
   progressOpen('Đang tạo dự án','Đang sao chép và phân tích tài nguyên…',20);
   try{const p=await api('/api/projects',{method:'POST',body:form});progressClose();await openProject(p.id);toast('Đã tạo và tự căn chỉnh dự án.');}
   catch(error){progressClose();toast(error.message,true);}
@@ -55,9 +55,10 @@ function renderStudio(){
   $('#subtitleFont').value=s.subtitle_font||'Microsoft JhengHei';$('#subtitleFontSize').value=s.subtitle_font_size||54;
   $('#subtitleMaxChars').value=s.subtitle_max_chars||16;
   $('#timingMode').value=s.timing_mode||'voice';$('#manualDuration').value=s.manual_scene_duration||6;syncTimingMode();syncRenderMode();
-  const voice=p.audio.voice||'Chưa chọn',music=p.audio.music||'Chưa chọn';
-  $('#assetSummary').innerHTML=`<div class="asset-row"><span>▧ ${p.scenes.length} ảnh đã sắp xếp</span><b>✓ SẴN SÀNG</b></div><div class="asset-row"><span title="${esc(voice)}">♬ Voice: ${esc(voice)}</span><button type="button" class="asset-button" data-audio="voice">${p.audio.voice?'Thay file':'Chọn voice'}</button></div><div class="asset-row"><span title="${esc(music)}">♫ Nhạc: ${esc(music)}</span><button type="button" class="asset-button" data-audio="music">${p.audio.music?'Thay file':'Chọn nhạc'}</button></div><div class="asset-row"><span>ID: ${esc(p.id)}</span><b>LOCAL</b></div>`;
-  $$('.asset-button').forEach(button=>button.onclick=()=>$('#studio'+(button.dataset.audio==='voice'?'Voice':'Music')+'Input').click());
+  const voice=p.audio.voice||'Chưa chọn',music=p.audio.music||'Chưa chọn',hasVi=Boolean(p.source_script_vi);
+  $('#assetSummary').innerHTML=`<div class="asset-row"><span>▧ ${p.scenes.length} ảnh đã sắp xếp</span><b>✓ SẴN SÀNG</b></div><div class="asset-row"><span title="${esc(voice)}">♬ Voice: ${esc(voice)}</span><button type="button" class="asset-button" data-audio="voice">${p.audio.voice?'Thay file':'Chọn voice'}</button></div><div class="asset-row"><span title="${esc(music)}">♫ Nhạc: ${esc(music)}</span><button type="button" class="asset-button" data-audio="music">${p.audio.music?'Thay file':'Chọn nhạc'}</button></div><div class="asset-row"><span>🇻🇳 Kịch bản Việt: ${hasVi?'source-script-vi.txt':'Chưa chọn'}</span><button type="button" class="asset-button" data-script-vi>${hasVi?'Thay file':'Chọn TXT'}</button></div><div class="asset-row"><span>ID: ${esc(p.id)}</span><b>LOCAL</b></div>`;
+  $$('.asset-button[data-audio]').forEach(button=>button.onclick=()=>$('#studio'+(button.dataset.audio==='voice'?'Voice':'Music')+'Input').click());
+  $('[data-script-vi]').onclick=()=>$('#studioScriptViInput').click();
   showVolume();
   $('#analysisInfo').textContent=a.mode==='voice'?`Đã căn theo voice ${Number(a.voice_duration).toFixed(2)} giây.`:`Thời lượng thủ công ${Number(a.total_duration||0).toFixed(2)} giây.`;
   const completed=p.scenes.filter(scene=>scene.rendered).length;
@@ -70,8 +71,12 @@ function renderStudio(){
   $$('.apply-voice-trim').forEach(button=>button.onclick=()=>applyVoiceTrim(Number(button.dataset.index)));
   $$('.voice-trim-start,.voice-trim-end').forEach(input=>input.oninput=()=>updateVoiceTrimSummary(Number(input.closest('.scene-card').dataset.index)));
   restoreActiveProgress();
-  $('#outputPanel').classList.toggle('hidden',!p.final_video);
+  $('#outputPanel').classList.toggle('hidden',!p.final_video&&!p.vietnamese_subtitle);
+  $('#downloadFinal').classList.toggle('hidden',!p.final_video);
   $('#downloadFinal').href=`/api/projects/${p.id}/download`;
+  $('#downloadViSrt').classList.toggle('hidden',!p.vietnamese_subtitle);
+  $('#downloadViSrt').href=`/api/projects/${p.id}/subtitles/vi/download`;
+  $('#outputDescription').textContent=p.vietnamese_subtitle?'MP4 và phụ đề SRT tiếng Việt đã được căn theo timeline.':'MP4 đã ghép, trộn âm thanh và phụ đề.';
 }
 
 function sceneCard(scene,project){
@@ -129,6 +134,7 @@ function payload(){
 async function save(showToast=true){ if(!state.project)return;state.project=await api(`/api/projects/${state.project.id}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload())});if(showToast)toast('Đã lưu thay đổi.');return state.project; }
 async function reanalyze(){try{await save(false);state.project=await api(`/api/projects/${state.project.id}/analyze`,{method:'POST'});renderStudio();toast('Đã căn lại kịch bản theo voice.');}catch(e){toast(e.message,true)}}
 async function uploadProjectAudio(kind,file){if(!file||!state.project)return;progressOpen(kind==='voice'?'Đang cập nhật voice':'Đang cập nhật nhạc','Đang lưu cấu hình và đọc file âm thanh…',25);try{await save(false);const autoAlign=state.project.settings.timing_mode==='voice';const form=new FormData();form.append('file',file);state.project=await api(`/api/projects/${state.project.id}/audio/${kind}`,{method:'POST',body:form});progressClose();renderStudio();toast(kind==='voice'?(autoAlign?'Đã cập nhật voice và căn lại thời lượng.':'Đã cập nhật voice; thời lượng thủ công được giữ nguyên.'):'Đã cập nhật nhạc nền. Chỉ cần ghép lại video.')}catch(e){progressClose();toast(e.message,true)}}
+async function uploadVietnameseScript(file){if(!file||!state.project)return;progressOpen('Đang nhập kịch bản Việt','Đang đọc và lưu source-script-vi.txt…',35);try{await save(false);const form=new FormData();form.append('file',file);state.project=await api(`/api/projects/${state.project.id}/script/vi`,{method:'POST',body:form});progressClose();renderStudio();toast('Đã nhập kịch bản tiếng Việt. Bấm ghép để tạo SRT.')}catch(e){progressClose();toast(e.message,true)}}
 
 function progressOpen(title,message,value=0){$('#progressTitle').textContent=title;$('#progressMessage').textContent=message;$('#progressBar').style.width=value+'%';$('#progressValue').textContent=Math.round(value)+'%';$('#closeProgress').classList.add('hidden');$('#progressOverlay').classList.remove('hidden');}
 function progressClose(){$('#progressOverlay').classList.add('hidden');}
@@ -149,7 +155,7 @@ async function watch(jobId,context={}){
     for(const [key,value] of Object.entries(sceneProgress)){const index=Number(key);context.progress[index]=value;context.messages[index]=Number(value)>=100?'Đã dựng xong · đang chờ ghép':`Đang dựng cảnh ${index}`;if(context.projectId===state.project?.id)setSceneProgress(index,value,context.messages[index])}
     if(context.global){$('#progressMessage').textContent=job.message;$('#progressBar').style.width=job.progress+'%';$('#progressValue').textContent=Math.round(job.progress)+'%'}
     if(job.state==='done'){
-      state.jobs.delete(jobId);state.polls.delete(jobId);if(context.global)progressClose();await refreshCurrentProject();toast(context.sceneIndexes.length>1?'Đã dựng và ghép toàn bộ video.':'Tác vụ đã hoàn tất.');return;
+      state.jobs.delete(jobId);state.polls.delete(jobId);if(context.global)progressClose();await refreshCurrentProject();toast(state.project?.vietnamese_subtitle?'Đã ghép MP4 và tạo SRT tiếng Việt.':(context.sceneIndexes.length>1?'Đã dựng và ghép toàn bộ video.':'Tác vụ đã hoàn tất.'));return;
     }
     if(job.state==='error'){
       state.jobs.delete(jobId);state.polls.delete(jobId);if(context.global)progressClose();await refreshCurrentProject();toast(job.error||'Dựng thất bại',true);return;
@@ -173,7 +179,9 @@ $('#imagesInput').onchange=e=>addImages(e.target.files);$('#folderInput').onchan
 $$('[data-pick]').forEach(button=>button.onclick=()=>$('#'+button.dataset.pick).click());
 $('#voiceInput').onchange=e=>$('#voiceName').textContent=e.target.files[0]?.name||'Không bắt buộc';$('#musicInput').onchange=e=>$('#musicName').textContent=e.target.files[0]?.name||'Không bắt buộc';
 $('#studioVoiceInput').onchange=e=>{uploadProjectAudio('voice',e.target.files[0]);e.target.value=''};$('#studioMusicInput').onchange=e=>{uploadProjectAudio('music',e.target.files[0]);e.target.value=''};
+$('#studioScriptViInput').onchange=e=>{uploadVietnameseScript(e.target.files[0]);e.target.value=''};
 $('#scriptFile').onchange=async e=>{const file=e.target.files[0];if(file)$('#scriptInput').value=await file.text()};
+$('#scriptViFile').onchange=e=>$('#scriptViName').textContent=e.target.files[0]?.name||'Không bắt buộc';
 const zone=$('#imageZone');['dragenter','dragover'].forEach(name=>zone.addEventListener(name,e=>{e.preventDefault();zone.classList.add('drag')}));['dragleave','drop'].forEach(name=>zone.addEventListener(name,e=>{e.preventDefault();zone.classList.remove('drag')}));zone.addEventListener('drop',e=>addImages(e.dataTransfer.files));
 $$('input[name="createRenderMode"]').forEach(input=>input.onchange=syncCreateMode);$('#createTransition').onchange=syncCreateMode;
 $('#voiceVolume').oninput=$('#musicVolume').oninput=showVolume;$('#timingMode').onchange=syncTimingMode;$('#renderMode').onchange=syncRenderMode;$('#transition').onchange=syncRenderMode;$('#saveProject').onclick=()=>save();$('#reanalyze').onclick=reanalyze;$('#renderAll').onclick=startAll;$('#mergeOnly').onclick=mergeOnly;$('#closeProgress').onclick=progressClose;

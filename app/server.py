@@ -12,7 +12,7 @@ from flask import Flask, jsonify, request, send_file
 
 from .pipeline import (JOBS, WORKSPACE, analyze_project, create_project, list_projects,
                        load_project, merge_project, project_path, render_all, render_scene,
-                       set_audio, update_project)
+                       set_audio, set_vietnamese_script, update_project)
 
 ROOT = Path(__file__).resolve().parents[1]
 app = Flask(__name__, static_folder=str(ROOT / "app" / "static"), static_url_path="/static")
@@ -42,6 +42,10 @@ def projects_create():
     script_file = request.files.get("script_file")
     if script_file and script_file.filename:
         script = script_file.read().decode("utf-8-sig", errors="replace")
+    script_vi = request.form.get("script_vi", "")
+    script_vi_file = request.files.get("script_vi_file")
+    if script_vi_file and script_vi_file.filename:
+        script_vi = script_vi_file.read().decode("utf-8-sig", errors="replace")
     voice_file = request.files.get("voice")
     music_file = request.files.get("music")
     voice = (voice_file.filename, voice_file.read()) if voice_file and voice_file.filename else None
@@ -52,6 +56,7 @@ def projects_create():
             request.form.get("render_mode", "whiteboard"),
             request.form.get("transition", "dissolve"),
             request.form.get("transition_duration", 0.55),
+            script_vi,
         )
         return jsonify(project), 201
     except ValueError as exc:
@@ -90,6 +95,22 @@ def projects_audio(project_id: str, kind: str):
     try:
         return jsonify(set_audio(project_id, kind, upload.filename, upload.read()))
     except Exception as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@app.post("/api/projects/<project_id>/script/vi")
+def projects_vietnamese_script(project_id: str):
+    upload = request.files.get("file")
+    if not upload or not upload.filename:
+        return jsonify({"error": "Chưa chọn file source-script-vi.txt"}), 400
+    if Path(upload.filename).suffix.lower() != ".txt":
+        return jsonify({"error": "Kịch bản tiếng Việt phải là file TXT"}), 400
+    try:
+        text = upload.read().decode("utf-8-sig", errors="replace")
+        if not text.strip():
+            raise ValueError("File kịch bản tiếng Việt đang trống")
+        return jsonify(set_vietnamese_script(project_id, text))
+    except (ValueError, OSError) as exc:
         return jsonify({"error": str(exc)}), 400
 
 
@@ -166,6 +187,16 @@ def final_download(project_id: str):
         return jsonify({"error": "Chưa có video hoàn chỉnh"}), 404
     path = project_path(project_id) / "outputs" / project["final_video"]
     return send_file(path, mimetype="video/mp4", as_attachment=True, download_name=path.name)
+
+
+@app.get("/api/projects/<project_id>/subtitles/vi/download")
+def vietnamese_subtitle_download(project_id: str):
+    project = load_project(project_id)
+    filename = project.get("vietnamese_subtitle")
+    path = project_path(project_id) / "outputs" / filename if filename else None
+    if not path or not path.exists():
+        return jsonify({"error": "Chưa có phụ đề tiếng Việt. Hãy nhập source-script-vi.txt và ghép video."}), 404
+    return send_file(path, mimetype="application/x-subrip", as_attachment=True, download_name=path.name)
 
 
 def existing_studio_url(host: str, port: int) -> str | None:

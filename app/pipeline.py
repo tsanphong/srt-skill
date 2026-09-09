@@ -177,6 +177,8 @@ def _normalize_video_settings(settings: dict) -> dict:
 def load_project(project_id: str) -> dict:
     with PROJECT_STATE_LOCK:
         project = read_json(project_path(project_id) / "project.json")
+        project.setdefault("source_script_vi", "")
+        project.setdefault("vietnamese_subtitle", None)
         _normalize_subtitle_settings(project.setdefault("settings", {}))
         _normalize_video_settings(project["settings"])
         if project.get("audio", {}).get("voice") and project.get("analysis", {}).get("mode") == "voice":
@@ -229,7 +231,8 @@ def create_project(name: str, images: list[tuple[str, bytes]], script: str = "",
                    voice: tuple[str, bytes] | None = None,
                    music: tuple[str, bytes] | None = None,
                    render_mode: str = "whiteboard", transition: str = "dissolve",
-                   transition_duration: float = 0.55) -> dict:
+                   transition_duration: float = 0.55,
+                   source_script_vi: str = "") -> dict:
     valid_images = [(n, b) for n, b in images if Path(n).suffix.lower() in IMAGE_EXTENSIONS and b]
     if not valid_images:
         raise ValueError("Cần ít nhất một ảnh hợp lệ")
@@ -257,7 +260,8 @@ def create_project(name: str, images: list[tuple[str, bytes]], script: str = "",
     now = datetime.now().isoformat(timespec="seconds")
     project = {
         "id": project_id, "name": name.strip() or "Dự án mới", "created_at": now, "updated_at": now,
-        "script": script.strip(), "audio": audio, "scenes": scenes,
+        "script": script.strip(), "source_script_vi": source_script_vi.strip(),
+        "vietnamese_subtitle": None, "audio": audio, "scenes": scenes,
         "settings": {
             "aspect": "9:16", "fps": 30, "resolution": "1080p", "ink_color": "#222831",
             "ink_path": "grid", "color_fill": "contour-wipe", "voice_volume": 1.0,
@@ -274,6 +278,10 @@ def create_project(name: str, images: list[tuple[str, bytes]], script: str = "",
         "transition_duration": transition_duration,
     })
     _normalize_video_settings(project["settings"])
+    if project["source_script_vi"]:
+        (root / "source" / "source-script-vi.txt").write_text(
+            project["source_script_vi"] + "\n", encoding="utf-8-sig"
+        )
     save_project(project)
     analyze_project(project_id)
     return load_project(project_id)
@@ -305,6 +313,30 @@ def set_audio(project_id: str, kind: str, filename: str, data: bytes) -> dict:
     if kind == "voice":
         return analyze_project(project_id)
     return load_project(project_id)
+
+
+@synchronized_state
+def set_vietnamese_script(project_id: str, text: str) -> dict:
+    project = load_project(project_id)
+    normalized = text.replace("\r\n", "\n").strip()
+    project["source_script_vi"] = normalized
+    project["vietnamese_subtitle"] = None
+    root = project_path(project_id)
+    source = root / "source" / "source-script-vi.txt"
+    subtitle = root / "outputs" / f"{project_id}-vi.srt"
+    if normalized:
+        source.write_text(normalized + "\n", encoding="utf-8-sig")
+    else:
+        source.unlink(missing_ok=True)
+    subtitle.unlink(missing_ok=True)
+    return save_project(project)
+
+
+def _invalidate_vietnamese_subtitle(project: dict) -> None:
+    filename = project.get("vietnamese_subtitle")
+    if filename:
+        (project_path(project["id"]) / "outputs" / filename).unlink(missing_ok=True)
+    project["vietnamese_subtitle"] = None
 
 
 @synchronized_state
@@ -360,6 +392,7 @@ def analyze_project(project_id: str) -> dict:
         "voice_duration": round(detected_voice_duration, 3) if detected_voice_duration else None,
         "total_duration": round(cursor, 3), "mode": "voice" if use_voice else "manual",
     }
+    _invalidate_vietnamese_subtitle(project)
     generate_subtitles(project)
     return save_project(project)
 
@@ -424,6 +457,7 @@ def update_project(project_id: str, payload: dict) -> dict:
     project["analysis"]["total_duration"] = round(cursor, 3)
     if project_changed:
         project["final_video"] = None
+        _invalidate_vietnamese_subtitle(project)
     generate_subtitles(project)
     return save_project(project)
 
@@ -441,6 +475,123 @@ def generate_subtitles(project: dict) -> None:
         if text:
             entries.append(f"{len(entries)+1}\n{_srt_time(scene['start'])} --> {_srt_time(scene['end'])}\n{text}")
     (root / "source" / "subtitles.srt").write_text("\n\n".join(entries) + ("\n" if entries else ""), encoding="utf-8")
+
+
+def _localized_scene_texts(project: dict, text: str) -> list[str]:
+    """Map an ordered translated script to the existing scene sequence."""
+    count = len(project.get("scenes", []))
+    if count <= 0:
+        return []
+    normalized = text.replace("\r\n", "\n").strip()
+    if not normalized:
+        return [""] * count
+    paragraphs = [re.sub(r"\s+", " ", value).strip()
+                  for value in re.split(r"\n\s*\n+", normalized) if value.strip()]
+    if len(paragraphs) == count:
+        return paragraphs
+
+    units = [re.sub(r"\s+", " ", value).strip() for value in re.split(
+        r"(?<=[.!?…])\s+|\n+", normalized
+    ) if value.strip()]
+    if not units:
+        return [""] * count
+    scene_weights = [max(1, len(re.sub(r"\s+", "", scene.get("text", ""))))
+                     for scene in project["scenes"]]
+    weight_total = sum(scene_weights)
+    unit_weights = [max(1, len(re.sub(r"\s+", "", value))) for value in units]
+    text_total = sum(unit_weights)
+    targets = []
+    cumulative = 0.0
+    for weight in scene_weights[:-1]:
+        cumulative += text_total * weight / weight_total
+        targets.append(cumulative)
+    groups = [""] * count
+    group_index = 0
+    consumed = 0
+    for unit, weight in zip(units, unit_weights):
+        if (group_index < count - 1 and groups[group_index]
+                and consumed >= targets[group_index]):
+            group_index += 1
+        groups[group_index] += (" " if groups[group_index] else "") + unit
+        consumed += weight
+    return groups
+
+
+def _balanced_srt_lines(text: str, max_line_chars: int = 38) -> str:
+    if len(text) <= max_line_chars or " " not in text:
+        return text
+    words = text.split()
+    best: tuple[int, str, str] | None = None
+    for index in range(1, len(words)):
+        left, right = " ".join(words[:index]), " ".join(words[index:])
+        if len(left) <= max_line_chars and len(right) <= max_line_chars:
+            score = abs(len(left) - len(right))
+            if best is None or score < best[0]:
+                best = (score, left, right)
+    return f"{best[1]}\n{best[2]}" if best else text
+
+
+def _localized_subtitle_events(project: dict, text: str) -> list[tuple[float, float, str]]:
+    scene_texts = _localized_scene_texts(project, text)
+    voice = _audio_file(project, "voice")
+    activity = _speech_intervals(voice) if voice else []
+    events: list[tuple[float, float, str]] = []
+    for scene, scene_text in zip(project["scenes"], scene_texts):
+        chunks = _subtitle_chunks(scene_text, 68)
+        if not chunks:
+            continue
+        scene_start, scene_end = float(scene["start"]), float(scene["end"])
+        source_start = float(scene.get("voice_start") if scene.get("voice_start") is not None else scene_start)
+        source_start += float(scene.get("voice_trim_start", 0))
+        source_end = float(scene.get("voice_end") if scene.get("voice_end") is not None else scene_end)
+        source_end -= float(scene.get("voice_trim_end", 0))
+        voiced = [(max(start, source_start), min(end, source_end)) for start, end in activity
+                  if min(end, source_end) - max(start, source_start) >= .02]
+        weights = [max(1, len(re.sub(r"[\s,.!?…;:]", "", chunk))) for chunk in chunks]
+        weight_total = sum(weights)
+        fractions = [0.0]
+        for weight in weights:
+            fractions.append(fractions[-1] + weight / weight_total)
+        if voiced:
+            desired = [_time_at_voice_fraction(voiced, value) for value in fractions[1:-1]]
+            gaps = [(voiced[index][1], voiced[index + 1][0]) for index in range(len(voiced) - 1)
+                    if voiced[index + 1][0] - voiced[index][1] >= .10]
+            cuts: list[tuple[float, float]] = []
+            last_gap = -1
+            for target in desired:
+                candidates = [(index, gap) for index, gap in enumerate(gaps) if index > last_gap]
+                nearest = min(candidates, key=lambda item: abs(sum(item[1]) / 2 - target)) if candidates else None
+                if nearest and abs(sum(nearest[1]) / 2 - target) <= .70:
+                    last_gap, cut = nearest
+                    cuts.append(cut)
+                else:
+                    cuts.append((target, target))
+            source_starts = [voiced[0][0], *[cut[1] for cut in cuts]]
+            source_ends = [cut[0] for cut in cuts] + [voiced[-1][1]]
+            starts = [scene_start + value - source_start for value in source_starts]
+            ends = [scene_start + value - source_start for value in source_ends]
+        else:
+            boundaries = [scene_start + (scene_end - scene_start) * fraction for fraction in fractions]
+            starts, ends = boundaries[:-1], boundaries[1:]
+        for index, chunk in enumerate(chunks):
+            start, end = starts[index], ends[index]
+            if end - start >= .08:
+                events.append((start, end, _balanced_srt_lines(chunk)))
+    return events
+
+
+def generate_vietnamese_subtitles(project: dict) -> Path | None:
+    text = project.get("source_script_vi", "").strip()
+    if not text:
+        return None
+    output = project_path(project["id"]) / "outputs" / f"{project['id']}-vi.srt"
+    output.parent.mkdir(parents=True, exist_ok=True)
+    entries = [
+        f"{index}\n{_srt_time(start)} --> {_srt_time(end)}\n{cue}"
+        for index, (start, end, cue) in enumerate(_localized_subtitle_events(project, text), 1)
+    ]
+    output.write_text("\n\n".join(entries) + ("\n" if entries else ""), encoding="utf-8-sig")
+    return output
 
 
 def _annotation(project: dict, scene: dict) -> Path:
@@ -949,6 +1100,12 @@ def _merge_project_locked(project_id: str, progress: Callable[[float, str], None
     ffmpeg = ffmpeg_exe()
     outputs = root / "outputs"
     outputs.mkdir(parents=True, exist_ok=True)
+    vietnamese_subtitle = generate_vietnamese_subtitles(project)
+    with PROJECT_STATE_LOCK:
+        current_project = load_project(project_id)
+        current_project["vietnamese_subtitle"] = vietnamese_subtitle.name if vietnamese_subtitle else None
+        save_project(current_project)
+        project["vietnamese_subtitle"] = current_project["vietnamese_subtitle"]
     visual = root / "outputs" / "visual.mp4"
     visual_manifest = outputs / "visual.manifest.json"
     visual_signature = _visual_signature(project, videos, width, height, fps)

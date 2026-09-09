@@ -142,6 +142,7 @@ function setSceneProgress(index,value,message='Đang dựng…'){
 function restoreActiveProgress(){for(const context of state.jobs.values()){if(context.projectId!==state.project?.id)continue;for(const index of context.sceneIndexes||[])setSceneProgress(index,context.progress?.[index]||1,context.messages?.[index]||'Đang chờ dựng…')}}
 async function refreshCurrentProject(){if(!state.project)return;const id=state.project.id,project=await api(`/api/projects/${id}`);if(state.project?.id===id){state.project=project;renderStudio()}}
 async function watch(jobId,context={}){
+  if(state.polls.has(jobId))return;
   context={projectId:state.project.id,sceneIndexes:[],progress:{},messages:{},global:false,...context};state.jobs.set(jobId,context);
   const tick=async()=>{try{
     const job=await api(`/api/jobs/${jobId}`),details=job.details||{},sceneProgress=details.scene_progress||{};
@@ -165,7 +166,7 @@ async function startAll(){
   if([...state.jobs.values()].some(job=>job.projectId===state.project.id&&job.sceneIndexes?.length))return toast('Đang có cảnh được dựng. Hãy chờ các cảnh đó hoàn tất.',true);
   try{await save(false);const indexes=state.project.scenes.filter(scene=>!scene.rendered).map(scene=>scene.index);if(!indexes.length)return mergeOnly();indexes.forEach(index=>setSceneProgress(index,1,'Đang chờ dựng song song…'));const r=await api(`/api/projects/${state.project.id}/render/all`,{method:'POST'});watch(r.job_id,{sceneIndexes:indexes})}catch(e){await refreshCurrentProject();toast(e.message,true)}
 }
-async function mergeOnly(){if([...state.jobs.values()].some(job=>job.projectId===state.project.id&&job.sceneIndexes?.length))return toast('Hãy chờ các cảnh đang dựng hoàn tất trước khi ghép.',true);try{await save(false);progressOpen('Đang ghép video','Bạn vẫn có thể tiếp tục chỉnh sửa trong lúc ghép…');const r=await api(`/api/projects/${state.project.id}/merge`,{method:'POST'});watch(r.job_id,{global:true})}catch(e){progressClose();toast(e.message,true)}}
+async function mergeOnly(){if([...state.jobs.values()].some(job=>job.projectId===state.project.id&&(job.sceneIndexes?.length||job.global)))return toast('Dự án này đang được xử lý. Tiến trình hiện tại sẽ tiếp tục chạy.',true);try{await save(false);progressOpen('Đang ghép video','Bạn vẫn có thể tiếp tục chỉnh sửa trong lúc ghép…');const r=await api(`/api/projects/${state.project.id}/merge`,{method:'POST'});watch(r.job_id,{global:true})}catch(e){progressClose();toast(e.message,true)}}
 $('#newProject').onclick=$('#heroStart').onclick=createScreen;$('#cancelCreate').onclick=()=>show('welcome');$('#createView').onsubmit=createProject;
 $('#pickImages').onclick=()=>$('#imagesInput').click();$('#pickFolder').onclick=()=>$('#folderInput').click();
 $('#imagesInput').onchange=e=>addImages(e.target.files);$('#folderInput').onchange=e=>addImages(e.target.files);

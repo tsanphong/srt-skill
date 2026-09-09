@@ -152,6 +152,24 @@ class PipelineTests(unittest.TestCase):
         self.assertIn("xfade=transition=fade:duration=0.550:offset=0[transition1]", chain)
         self.assertIn("[body0][transition1][body1]concat=n=3:v=1:a=0[visual]", chain)
 
+    def test_visual_cache_signature_changes_with_transition_or_scene_file(self):
+        project = pipeline.create_project(
+            "Cache hình", [("1.png", png_bytes()), ("2.png", png_bytes())], "Một. Hai."
+        )
+        videos = []
+        for index in range(1, 3):
+            path = self.temp / project["id"] / "scenes" / f"scene-{index:03d}.mp4"
+            path.write_bytes(f"scene-{index}".encode())
+            videos.append(path)
+        first = pipeline._visual_signature(project, videos, 1080, 1920, 30)
+        changed_transition = dict(project)
+        changed_transition["settings"] = dict(project["settings"], transition="fadeblack")
+        second = pipeline._visual_signature(changed_transition, videos, 1080, 1920, 30)
+        videos[0].write_bytes(b"updated-scene")
+        third = pipeline._visual_signature(project, videos, 1080, 1920, 30)
+        self.assertNotEqual(first, second)
+        self.assertNotEqual(first, third)
+
     def test_static_scene_renderer_keeps_full_image_and_duration(self):
         project = pipeline.create_project(
             "Render tĩnh", [("1.png", png_bytes())], "Một cảnh", None, None, "static"
@@ -266,6 +284,36 @@ class PipelineTests(unittest.TestCase):
                 patch.object(pipeline, "merge_project", return_value=Path("final.mp4")):
             pipeline.render_all(project["id"], lambda *_: None)
         self.assertEqual(peak, 2)
+
+    def test_merge_and_render_all_share_one_active_final_job(self):
+        manager = pipeline.JobManager()
+        started = threading.Event()
+        release = threading.Event()
+
+        def blocking_job(update):
+            started.set()
+            release.wait(2)
+            return Path("final.mp4")
+
+        try:
+            first = manager.submit("same-project", "merge", blocking_job)
+            self.assertTrue(started.wait(1))
+            duplicate_merge = manager.submit("same-project", "merge", blocking_job)
+            duplicate_all = manager.submit("same-project", "all", blocking_job)
+            other_project = manager.submit("other-project", "merge", lambda update: Path("other.mp4"))
+            self.assertEqual(first, duplicate_merge)
+            self.assertEqual(first, duplicate_all)
+            self.assertNotEqual(first, other_project)
+            release.set()
+            deadline = time.time() + 2
+            while manager.get(first)["state"] != "done" and time.time() < deadline:
+                time.sleep(.01)
+            self.assertEqual(manager.get(first)["state"], "done")
+            next_job = manager.submit("same-project", "merge", lambda update: Path("next.mp4"))
+            self.assertNotEqual(first, next_job)
+        finally:
+            release.set()
+            manager.executor.shutdown(wait=True)
 
 
 if __name__ == "__main__":

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import re
@@ -29,6 +30,8 @@ RENDER_SLOTS = threading.BoundedSemaphore(2)
 PROJECT_STATE_LOCK = threading.RLock()
 ACTIVE_SCENES_LOCK = threading.Lock()
 ACTIVE_SCENES: set[tuple[str, int]] = set()
+MERGE_LOCKS_GUARD = threading.Lock()
+MERGE_LOCKS: dict[str, threading.Lock] = {}
 SUBTITLE_FONTS = (
     "Microsoft JhengHei", "Microsoft JhengHei UI", "Microsoft YaHei",
     "Segoe UI", "Arial", "Tahoma",
@@ -53,6 +56,11 @@ def synchronized_state(fn):
         with PROJECT_STATE_LOCK:
             return fn(*args, **kwargs)
     return wrapped
+
+
+def _merge_lock(project_id: str) -> threading.Lock:
+    with MERGE_LOCKS_GUARD:
+        return MERGE_LOCKS.setdefault(project_id, threading.Lock())
 
 
 def natural_key(value: str) -> list[object]:
@@ -840,7 +848,94 @@ def _visual_filter(project: dict, width: int, height: int, fps: int) -> tuple[li
     return filters, "[visual]"
 
 
+def _run_ffmpeg(command: list[str], cwd: Path, log_path: Path, duration: float,
+                progress: Callable[[float, str], None] | None, progress_start: float,
+                progress_end: float, message: str) -> None:
+    """Run FFmpeg with machine-readable progress while streaming stderr to disk."""
+    command = [command[0], "-progress", "pipe:1", "-nostats", *command[1:]]
+    last_value = -1.0
+    with log_path.open("w", encoding="utf-8") as log:
+        proc = subprocess.Popen(
+            command, cwd=cwd, stdout=subprocess.PIPE, stderr=log,
+            text=True, encoding="utf-8", errors="replace", bufsize=1,
+        )
+        assert proc.stdout is not None
+        for raw_line in proc.stdout:
+            key, separator, raw_value = raw_line.strip().partition("=")
+            if not separator or key not in {"out_time_us", "out_time_ms"}:
+                continue
+            try:
+                elapsed = int(raw_value) / 1_000_000
+            except ValueError:
+                continue
+            ratio = max(0.0, min(1.0, elapsed / max(.001, duration)))
+            value = progress_start + (progress_end - progress_start) * ratio
+            if progress and value - last_value >= .25:
+                last_value = value
+                progress(value, f"{message} · {round(ratio * 100)}%")
+        proc.stdout.close()
+        returncode = proc.wait()
+    if returncode:
+        lines = log_path.read_text(encoding="utf-8", errors="replace").strip().splitlines()
+        detail = " | ".join(lines[-12:]) if lines else "FFmpeg không trả về chi tiết"
+        raise RuntimeError(f"{message} thất bại: {detail}")
+
+
+def _validate_media_output(path: Path, expected_duration: float, require_audio: bool,
+                           tolerance: float = .20) -> float:
+    if not path.exists() or path.stat().st_size < 1024:
+        raise RuntimeError(f"FFmpeg không tạo được file hợp lệ: {path.name}")
+    try:
+        with av.open(str(path)) as container:
+            if not container.streams.video:
+                raise RuntimeError(f"File {path.name} không có hình ảnh")
+            if require_audio and not container.streams.audio:
+                raise RuntimeError(f"File {path.name} không có âm thanh")
+            if container.duration:
+                actual = float(container.duration / av.time_base)
+            else:
+                durations = [float(stream.duration * stream.time_base)
+                             for stream in container.streams if stream.duration]
+                actual = max(durations) if durations else 0.0
+    except (av.error.FFmpegError, OSError) as exc:
+        raise RuntimeError(f"Không thể đọc file đầu ra {path.name}: {exc}") from exc
+    if actual <= 0 or abs(actual - expected_duration) > tolerance:
+        raise RuntimeError(
+            f"Thời lượng {path.name} không hợp lệ: {actual:.3f}s, cần {expected_duration:.3f}s"
+        )
+    return actual
+
+
+def _visual_signature(project: dict, videos: list[Path], width: int, height: int, fps: int) -> str:
+    payload = {
+        "version": 1,
+        "width": width,
+        "height": height,
+        "fps": fps,
+        "transition": project["settings"].get("transition", "dissolve"),
+        "transition_duration": float(project["settings"].get("transition_duration", .55)),
+        "scenes": [
+            {
+                "name": video.name,
+                "size": video.stat().st_size,
+                "mtime_ns": video.stat().st_mtime_ns,
+                "duration": float(scene["duration"]),
+            }
+            for scene, video in zip(project["scenes"], videos)
+        ],
+    }
+    serialized = json.dumps(payload, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+
+
 def merge_project(project_id: str, progress: Callable[[float, str], None] | None = None) -> Path:
+    # A direct caller can bypass JobManager, so the pipeline itself also guards
+    # each project's shared output paths.
+    with _merge_lock(project_id):
+        return _merge_project_locked(project_id, progress)
+
+
+def _merge_project_locked(project_id: str, progress: Callable[[float, str], None] | None = None) -> Path:
     project = load_project(project_id)
     root = project_path(project_id)
     videos = [root / "scenes" / s["video"] if s.get("rendered") and s.get("video")
@@ -850,123 +945,164 @@ def merge_project(project_id: str, progress: Callable[[float, str], None] | None
         raise ValueError("Chưa dựng: " + ", ".join(missing))
     width, height = _output_size(project["settings"])
     fps = int(project["settings"].get("fps", 30))
-    ffmpeg = ffmpeg_exe()
-    visual = root / "outputs" / "visual.mp4"
-    args = []
-    for video in videos:
-        args += ["-i", str(video)]
-    filters, visual_label = _visual_filter(project, width, height, fps)
-    command = [ffmpeg, "-hide_banner", "-y", *args, "-filter_complex", ";".join(filters), "-map", visual_label,
-               "-c:v", "libx264", "-preset", "fast", "-crf", "18", "-pix_fmt", "yuv420p", "-an", str(visual)]
-    if progress:
-        progress(10, "Đang chuẩn hóa và ghép hình")
-    proc = subprocess.run(command, cwd=root, capture_output=True, text=True, encoding="utf-8", errors="replace")
-    (root / "logs" / "merge-visual.log").write_text(proc.stderr, encoding="utf-8")
-    if proc.returncode:
-        detail = " | ".join(proc.stderr.strip().splitlines()[-12:]) if proc.stderr.strip() else "FFmpeg không trả về chi tiết"
-        raise RuntimeError(f"Ghép hình thất bại: {detail}")
-
-    project = load_project(project_id)
     total = float(project["analysis"]["total_duration"])
-    ass = make_ass(project, width, height)
-    voice, music = _audio_file(project, "voice"), _audio_file(project, "music")
-    final = root / "outputs" / f"{project_id}-final.mp4"
-    inputs = ["-i", str(visual)]
-    audio_filters = []
-    audio_labels = []
-    next_index = 1
-    if voice:
-        inputs += ["-i", str(voice)]
-        segments = []
-        for scene in project["scenes"]:
-            if scene.get("voice_start") is None or scene.get("voice_end") is None:
-                segments = []
-                break
-            start = float(scene["voice_start"]) + float(scene.get("voice_trim_start", 0))
-            end = float(scene["voice_end"]) - float(scene.get("voice_trim_end", 0))
-            if end - start < .05:
-                segments = []
-                break
-            segments.append((start, end))
-        if not any(float(scene.get("voice_trim_start", 0)) > 0 or float(scene.get("voice_trim_end", 0)) > 0
-                   for scene in project["scenes"]):
-            segments = []
-        volume = float(project["settings"].get("voice_volume", 1.0))
-        if len(segments) > 1:
-            sources = "".join(f"[voice-src-{i}]" for i in range(len(segments)))
-            audio_filters.append(f"[{next_index}:a]asplit={len(segments)}{sources}")
-            labels = []
-            for i, (start, end) in enumerate(segments):
-                label = f"voice-part-{i}"
-                audio_filters.append(
-                    f"[voice-src-{i}]atrim=start={start}:end={end},asetpts=PTS-STARTPTS[{label}]"
-                )
-                labels.append(f"[{label}]")
-            audio_filters.append(
-                "".join(labels) + f"concat=n={len(labels)}:v=0:a=1,volume={volume},apad=whole_dur={total}[voice]"
-            )
-        elif len(segments) == 1:
-            start, end = segments[0]
-            audio_filters.append(
-                f"[{next_index}:a]atrim=start={start}:end={end},asetpts=PTS-STARTPTS,"
-                f"volume={volume},apad=whole_dur={total}[voice]"
-            )
+    ffmpeg = ffmpeg_exe()
+    outputs = root / "outputs"
+    outputs.mkdir(parents=True, exist_ok=True)
+    visual = root / "outputs" / "visual.mp4"
+    visual_manifest = outputs / "visual.manifest.json"
+    visual_signature = _visual_signature(project, videos, width, height, fps)
+    token = uuid.uuid4().hex[:10]
+    visual_temp = outputs / f"visual-{token}.partial.mp4"
+    final_temp = outputs / f"{project_id}-final-{token}.partial.mp4"
+    try:
+        reuse_visual = False
+        if visual.exists() and visual_manifest.exists():
+            try:
+                manifest = read_json(visual_manifest)
+                if manifest.get("signature") == visual_signature:
+                    _validate_media_output(
+                        visual, total, require_audio=False,
+                        tolerance=max(1.5, len(videos) / fps + .2),
+                    )
+                    reuse_visual = True
+            except (OSError, ValueError, RuntimeError, json.JSONDecodeError):
+                reuse_visual = False
+        if reuse_visual:
+            if progress:
+                progress(64, "Đã dùng lại phần hình hợp lệ; đang chuẩn bị âm thanh")
         else:
-            audio_filters.append(f"[{next_index}:a]volume={volume},apad=whole_dur={total}[voice]")
-        audio_labels.append("[voice]")
-        next_index += 1
-    if music:
-        inputs += ["-stream_loop", "-1", "-i", str(music)]
-        fade_start = max(0, total - 2.5)
-        audio_filters.append(f"[{next_index}:a]volume={float(project['settings'].get('music_volume',.18))},atrim=0:{total},afade=t=out:st={fade_start}:d={min(2.5,total)}[music]")
-        audio_labels.append("[music]")
-    visual_duration = probe_duration(visual) or total
-    video_steps = [f"fps={fps}"]
-    if visual_duration < total:
-        # FFmpeg may discard the final boundary frame after trim/mux. Two
-        # guard frames keep video and audio within one frame at the target FPS.
-        padding = total - visual_duration + (2 / fps)
-        video_steps.append(f"tpad=stop_mode=clone:stop_duration={padding:.6f}")
-    video_steps.extend((f"trim=duration={total:.6f}", "setpts=PTS-STARTPTS"))
-    if ass:
-        video_steps.append("ass=source/subtitles.ass")
-    video_filter = "[0:v]" + ",".join(video_steps) + "[video]"
-    complex_filters = [video_filter, *audio_filters]
-    if len(audio_labels) > 1:
-        complex_filters.append("".join(audio_labels) + f"amix=inputs={len(audio_labels)}:duration=longest:normalize=0,alimiter=limit=0.95,atrim=0:{total}[audio]")
-    elif len(audio_labels) == 1:
-        complex_filters.append(audio_labels[0] + f"atrim=0:{total}[audio]")
-    else:
-        complex_filters.append(f"anullsrc=r=48000:cl=stereo,atrim=0:{total}[audio]")
-    command = [ffmpeg, "-hide_banner", "-y", *inputs, "-filter_complex", ";".join(complex_filters),
-               "-map", "[video]", "-map", "[audio]", "-t", str(total), "-c:v", "libx264", "-preset", "fast", "-crf", "18",
-               "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-movflags", "+faststart", str(final)]
-    if progress:
-        progress(65, "Đang trộn âm thanh, phụ đề và tên kênh")
-    proc = subprocess.run(command, cwd=root, capture_output=True, text=True, encoding="utf-8", errors="replace")
-    (root / "logs" / "final.log").write_text(proc.stderr, encoding="utf-8")
-    if proc.returncode:
-        raise RuntimeError("Xuất MP4 thất bại. Xem logs/final.log")
-    with PROJECT_STATE_LOCK:
-        project = load_project(project_id)
-        project["final_video"] = final.name
-        save_project(project)
-    if progress:
-        progress(100, "Đã xuất MP4 hoàn chỉnh")
-    return final
+            args = []
+            for video in videos:
+                args += ["-i", str(video)]
+            filters, visual_label = _visual_filter(project, width, height, fps)
+            command = [ffmpeg, "-hide_banner", "-y", *args, "-filter_complex", ";".join(filters), "-map", visual_label,
+                       "-c:v", "libx264", "-preset", "fast", "-crf", "18", "-pix_fmt", "yuv420p", "-an", str(visual_temp)]
+            if progress:
+                progress(10, "Đang chuẩn hóa và ghép hình")
+            _run_ffmpeg(command, root, root / "logs" / "merge-visual.log", total, progress, 10, 64,
+                        "Đang chuẩn hóa và ghép hình")
+            _validate_media_output(
+                visual_temp, total, require_audio=False,
+                tolerance=max(1.5, len(videos) / fps + .2),
+            )
+            visual_temp.replace(visual)
+            manifest_temp = outputs / f"visual-manifest-{token}.partial.json"
+            try:
+                write_json(manifest_temp, {"signature": visual_signature})
+                manifest_temp.replace(visual_manifest)
+            finally:
+                manifest_temp.unlink(missing_ok=True)
+
+        ass = make_ass(project, width, height)
+        voice, music = _audio_file(project, "voice"), _audio_file(project, "music")
+        final = root / "outputs" / f"{project_id}-final.mp4"
+        inputs = ["-i", str(visual)]
+        audio_filters = []
+        audio_labels = []
+        next_index = 1
+        if voice:
+            inputs += ["-i", str(voice)]
+            segments = []
+            for scene in project["scenes"]:
+                if scene.get("voice_start") is None or scene.get("voice_end") is None:
+                    segments = []
+                    break
+                start = float(scene["voice_start"]) + float(scene.get("voice_trim_start", 0))
+                end = float(scene["voice_end"]) - float(scene.get("voice_trim_end", 0))
+                if end - start < .05:
+                    segments = []
+                    break
+                segments.append((start, end))
+            if not any(float(scene.get("voice_trim_start", 0)) > 0 or float(scene.get("voice_trim_end", 0)) > 0
+                       for scene in project["scenes"]):
+                segments = []
+            volume = float(project["settings"].get("voice_volume", 1.0))
+            if len(segments) > 1:
+                sources = "".join(f"[voice-src-{i}]" for i in range(len(segments)))
+                audio_filters.append(f"[{next_index}:a]asplit={len(segments)}{sources}")
+                labels = []
+                for i, (start, end) in enumerate(segments):
+                    label = f"voice-part-{i}"
+                    audio_filters.append(
+                        f"[voice-src-{i}]atrim=start={start}:end={end},asetpts=PTS-STARTPTS[{label}]"
+                    )
+                    labels.append(f"[{label}]")
+                audio_filters.append(
+                    "".join(labels) + f"concat=n={len(labels)}:v=0:a=1,volume={volume},apad=whole_dur={total}[voice]"
+                )
+            elif len(segments) == 1:
+                start, end = segments[0]
+                audio_filters.append(
+                    f"[{next_index}:a]atrim=start={start}:end={end},asetpts=PTS-STARTPTS,"
+                    f"volume={volume},apad=whole_dur={total}[voice]"
+                )
+            else:
+                audio_filters.append(f"[{next_index}:a]volume={volume},apad=whole_dur={total}[voice]")
+            audio_labels.append("[voice]")
+            next_index += 1
+        if music:
+            inputs += ["-stream_loop", "-1", "-i", str(music)]
+            fade_start = max(0, total - 2.5)
+            audio_filters.append(f"[{next_index}:a]volume={float(project['settings'].get('music_volume',.18))},atrim=0:{total},afade=t=out:st={fade_start}:d={min(2.5,total)}[music]")
+            audio_labels.append("[music]")
+        visual_duration = probe_duration(visual) or total
+        video_steps = [f"fps={fps}"]
+        if visual_duration < total:
+            padding = total - visual_duration + (2 / fps)
+            video_steps.append(f"tpad=stop_mode=clone:stop_duration={padding:.6f}")
+        video_steps.extend((f"trim=duration={total:.6f}", "setpts=PTS-STARTPTS"))
+        if ass:
+            video_steps.append("ass=source/subtitles.ass")
+        video_filter = "[0:v]" + ",".join(video_steps) + "[video]"
+        complex_filters = [video_filter, *audio_filters]
+        if len(audio_labels) > 1:
+            complex_filters.append("".join(audio_labels) + f"amix=inputs={len(audio_labels)}:duration=longest:normalize=0,alimiter=limit=0.95,atrim=0:{total}[audio]")
+        elif len(audio_labels) == 1:
+            complex_filters.append(audio_labels[0] + f"atrim=0:{total}[audio]")
+        else:
+            complex_filters.append(f"anullsrc=r=48000:cl=stereo,atrim=0:{total}[audio]")
+        command = [ffmpeg, "-hide_banner", "-y", *inputs, "-filter_complex", ";".join(complex_filters),
+                   "-map", "[video]", "-map", "[audio]", "-t", str(total), "-c:v", "libx264", "-preset", "fast", "-crf", "18",
+                   "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-movflags", "+faststart", str(final_temp)]
+        if progress:
+            progress(65, "Đang trộn âm thanh, phụ đề và tên kênh")
+        _run_ffmpeg(command, root, root / "logs" / "final.log", total, progress, 65, 99,
+                    "Đang trộn âm thanh, phụ đề và tên kênh")
+        _validate_media_output(final_temp, total, require_audio=True, tolerance=.20)
+        final_temp.replace(final)
+        with PROJECT_STATE_LOCK:
+            current_project = load_project(project_id)
+            current_project["final_video"] = final.name
+            save_project(current_project)
+        if progress:
+            progress(100, "Đã xuất MP4 hoàn chỉnh")
+        return final
+    finally:
+        visual_temp.unlink(missing_ok=True)
+        final_temp.unlink(missing_ok=True)
 
 
 class JobManager:
     def __init__(self) -> None:
         self.executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="whiteboard")
         self.jobs: dict[str, dict] = {}
+        self.active_outputs: dict[tuple[str, str], str] = {}
         self.lock = threading.Lock()
 
     def submit(self, project_id: str, kind: str, fn: Callable) -> str:
-        job_id = uuid.uuid4().hex[:12]
+        output_key = (project_id, "final") if kind in {"all", "merge"} else None
         with self.lock:
+            if output_key:
+                active_job_id = self.active_outputs.get(output_key)
+                active_job = self.jobs.get(active_job_id) if active_job_id else None
+                if active_job and active_job["state"] in {"queued", "running"}:
+                    return active_job_id
+            job_id = uuid.uuid4().hex[:12]
             self.jobs[job_id] = {"id": job_id, "project_id": project_id, "kind": kind,
                                  "state": "queued", "progress": 0, "message": "Đang chờ", "error": None}
+            if output_key:
+                self.active_outputs[output_key] = job_id
 
         def update(progress: float, message: str, details: dict | None = None) -> None:
             with self.lock:
@@ -984,6 +1120,11 @@ class JobManager:
             except Exception as exc:
                 with self.lock:
                     self.jobs[job_id].update({"state": "error", "message": "Có lỗi", "error": str(exc)})
+            finally:
+                if output_key:
+                    with self.lock:
+                        if self.active_outputs.get(output_key) == job_id:
+                            self.active_outputs.pop(output_key, None)
         self.executor.submit(run)
         return job_id
 
